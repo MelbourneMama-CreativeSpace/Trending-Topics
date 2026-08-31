@@ -69,7 +69,7 @@ Deliverables: `.venv` (Python 3.12.10) · `requirements.txt` · `requirements-de
 
 ---
 
-## Phase 1 — Config, API skeleton, auth, logging
+## Phase 1 — Config, API skeleton, auth, logging ✅
 
 **Goal:** the two endpoints exist and are correctly protected.
 
@@ -84,7 +84,8 @@ config · settings load from env with correct defaults · missing required env f
 `run_id` format and uniqueness · `run_id` timestamp rendered in IST
 
 **Exit criteria:** uvicorn boots · `/health` 200 · `/api/daily-brief` 401 without token, 200 with ·
-no secret appears in any log line or response body
+no secret appears in any log line or response body — **met** (verified against a live uvicorn
+process, not only TestClient)
 
 ---
 
@@ -258,8 +259,8 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | Phase | Status |
 |---|---|
 | 0 — Environment & scaffold | ✅ complete |
-| 1 — Config, API, auth | next |
-| 2 — CSV persistence | not started |
+| 1 — Config, API, auth | ✅ complete |
+| 2 — CSV persistence | next |
 | 3 — Source discovery | not started |
 | 4 — Dedup & clustering | not started |
 | 5 — Ranking | not started |
