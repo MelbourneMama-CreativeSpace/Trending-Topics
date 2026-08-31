@@ -1,0 +1,27 @@
+# Runtime dependencies — Melbourne Mama Morning Trend Intelligence
+# Python 3.12+
+
+# --- API layer ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# --- Config & validation ---
+pydantic==2.10.5
+pydantic-settings==2.7.1
+
+# --- HTTP (OpenRouter, Resend, GitHub, news/search APIs) ---
+httpx==0.28.1
+tenacity==9.0.0
+
+# --- Source discovery ---
+feedparser==6.0.11
+python-dateutil==2.9.0.post0
+
+# --- Deduplication / clustering ---
+rapidfuzz==3.11.0
+
+# --- Email rendering ---
+jinja2==3.1.5
+
+# --- Timezone database (required on Windows and slim Linux images) ---
+tzdata==2025.1
