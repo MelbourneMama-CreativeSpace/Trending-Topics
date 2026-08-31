@@ -142,7 +142,7 @@ across 55 feeds with **0 failures** in 13.8s, including **200 Telugu-language** 
 
 ---
 
-## Phase 4 — Normalization, deduplication, clustering
+## Phase 4 — Normalization, deduplication, clustering ✅
 
 **Goal:** many articles become few real topics.
 
@@ -156,7 +156,17 @@ genuinely different stories stay separate) · no over-merging of distinct same-e
 cluster survives across runs via stable `topic_id`
 
 **Exit criteria:** PRD §25 case collapses to one topic · distinct stories never merged ·
-dedup measurably reduces the corpus on live data
+dedup measurably reduces the corpus on live data — **met**: live corpus 480→382 global topics
+(20% fewer) and 731→498 niche (32% fewer), 100% topic carry-over between runs, no cluster
+over 25 articles.
+
+> **Calibration finding:** document frequency cannot separate function words from entities at
+> this corpus size — in 454 articles, `out` and `court` each appeared in exactly 10. Clustering
+> quality therefore rests on a comprehensive stopword list, not on IDF rarity alone. Two live
+> over-merges (`"running out"`, `"man who"`) are locked in as regression tests.
+
+> **Note for Phase 5:** ranking sees ~380 global and ~500 niche topics. PRD §84's cost control
+> holds because AI only ever touches the top 10 after ranking.
 
 ---
 
@@ -272,8 +282,8 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | 1 — Config, API, auth | ✅ complete |
 | 2 — CSV persistence | ✅ complete |
 | 3 — Source discovery | ✅ complete |
-| 4 — Dedup & clustering | next |
-| 5 — Ranking | not started |
+| 4 — Dedup & clustering | ✅ complete |
+| 5 — Ranking | next |
 | 6 — AI layer | not started |
 | 7 — Email | not started |
 | 8 — Orchestration | not started |
