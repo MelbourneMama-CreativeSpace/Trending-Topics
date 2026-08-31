@@ -115,7 +115,7 @@ corrupt CSV → `CSV_READ_FAILED`, file preserved, pipeline continues · concurr
 
 ---
 
-## Phase 3 — Source discovery & source quality
+## Phase 3 — Source discovery & source quality ✅
 
 **Goal:** collect from three channels independently, never let one failure kill the run.
 
@@ -133,7 +133,12 @@ enforced · reliability weighting applied · Telugu (non-ASCII) queries survive 
 fires on 429, does **not** fire on 401/404
 
 **Exit criteria:** ≥30 global and ≥10 niche articles from RSS alone with zero API keys ·
-no single source failure aborts collection
+no single source failure aborts collection — **met**: live run collected **480 global / 731 niche**
+across 55 feeds with **0 failures** in 13.8s, including **200 Telugu-language** articles.
+
+> **Note for Phase 4:** collection yields ~1,200 articles per run. PRD §83–84 require filtering
+> down to ~40 topics before any AI call, so dedup and clustering carry real cost-control weight,
+> not just tidiness.
 
 ---
 
@@ -266,8 +271,8 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | 0 — Environment & scaffold | ✅ complete |
 | 1 — Config, API, auth | ✅ complete |
 | 2 — CSV persistence | ✅ complete |
-| 3 — Source discovery | next |
-| 4 — Dedup & clustering | not started |
+| 3 — Source discovery | ✅ complete |
+| 4 — Dedup & clustering | next |
 | 5 — Ranking | not started |
 | 6 — AI layer | not started |
 | 7 — Email | not started |

@@ -88,7 +88,9 @@ class ExecutionLock:
 
         self._log.warning(
             "STALE_LOCK_CLEARED file=%s age_seconds=%d ttl_seconds=%d",
-            self.path.name, int(age), self.ttl_seconds,
+            self.path.name,
+            int(age),
+            self.ttl_seconds,
         )
         self.path.unlink(missing_ok=True)
         return True

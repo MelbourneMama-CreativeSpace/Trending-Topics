@@ -66,7 +66,9 @@ class Repository:
         if skipped:
             self._log.warning(
                 "CSV_ROW_SKIPPED dataset=%s skipped=%d kept=%d",
-                dataset.value, skipped, len(records),
+                dataset.value,
+                skipped,
+                len(records),
             )
         return records
 
@@ -125,7 +127,9 @@ class Repository:
             # than carrying a row we cannot date.
             self._log.warning(
                 "RETENTION_UNPARSEABLE dataset=%s field=%s value=%r",
-                dataset.value, spec.retention_field, row.get(spec.retention_field, ""),
+                dataset.value,
+                spec.retention_field,
+                row.get(spec.retention_field, ""),
             )
             return True
         return local_date >= cutoff

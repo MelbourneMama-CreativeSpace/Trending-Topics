@@ -68,9 +68,7 @@ class Settings(BaseSettings):
     @classmethod
     def _agent_secret_is_strong_enough(cls, v: SecretStr) -> SecretStr:
         if len(v.get_secret_value()) < MIN_AGENT_SECRET_LENGTH:
-            raise ValueError(
-                f"AGENT_SECRET must be at least {MIN_AGENT_SECRET_LENGTH} characters"
-            )
+            raise ValueError(f"AGENT_SECRET must be at least {MIN_AGENT_SECRET_LENGTH} characters")
         return v
 
     @field_validator("timezone")

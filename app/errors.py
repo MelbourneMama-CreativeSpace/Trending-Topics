@@ -47,10 +47,10 @@ class ErrorCode(StrEnum):
 class Severity(StrEnum):
     """Failure severity (PRD 57), which decides whether the pipeline continues."""
 
-    WARNING = "WARNING"    # one source failed; pipeline continues
-    ERROR = "ERROR"        # one topic failed; pipeline continues
+    WARNING = "WARNING"  # one source failed; pipeline continues
+    ERROR = "ERROR"  # one topic failed; pipeline continues
     CRITICAL = "CRITICAL"  # no usable news; pipeline stops
-    FATAL = "FATAL"        # cannot initialise; request fails
+    FATAL = "FATAL"  # cannot initialise; request fails
 
 
 class BriefingError(Exception):
