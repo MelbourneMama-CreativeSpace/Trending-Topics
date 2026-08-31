@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Execution lock is ephemeral runtime state, never committed alongside data/*.csv
+data/*.lock
+data/*.tmp.csv
+data/*.corrupt-*.csv

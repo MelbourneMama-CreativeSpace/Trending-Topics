@@ -8,6 +8,8 @@ Two invariants every test relies on:
   the environment.
 """
 
+from zoneinfo import ZoneInfo
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -97,3 +99,63 @@ def run_log(caplog):
         yield caplog
     finally:
         logger.removeHandler(caplog.handler)
+
+
+# --- Phase 2: persistence fixtures ------------------------------------------
+
+
+@pytest.fixture
+def data_dir(tmp_path):
+    return tmp_path / "data"
+
+
+@pytest.fixture
+def backend(data_dir):
+    from app.storage import LocalCsvBackend
+
+    return LocalCsvBackend(data_dir)
+
+
+@pytest.fixture
+def repo(backend):
+    from zoneinfo import ZoneInfo
+
+    from app.storage import Repository
+
+    return Repository(backend, tz=ZoneInfo("Asia/Kolkata"), retention_days=31)
+
+
+def make_article(collected_at, article_id="a1", **overrides):
+    import datetime as dt
+
+    from app.models import Article
+
+    if isinstance(collected_at, str):
+        collected_at = dt.datetime.fromisoformat(collected_at)
+    defaults = {
+        "id": article_id,
+        "title": "A headline",
+        "url": "https://example.com/story",
+        "source": "Example Wire",
+        "source_domain": "example.com",
+        "collected_at": collected_at,
+        "content_hash": "deadbeef",
+    }
+    return Article(**{**defaults, **overrides})
+
+
+def make_briefing(briefing_date, **overrides):
+    import datetime as dt
+
+    from app.models import Briefing, BriefingStatus, build_briefing_id
+
+    if isinstance(briefing_date, str):
+        briefing_date = dt.date.fromisoformat(briefing_date)
+    defaults = {
+        "briefing_id": build_briefing_id(briefing_date, "Asia/Kolkata"),
+        "briefing_date": briefing_date,
+        "timezone": "Asia/Kolkata",
+        "status": BriefingStatus.STARTED,
+        "started_at": dt.datetime(2026, 9, 1, 7, 30, tzinfo=ZoneInfo("Asia/Kolkata")),
+    }
+    return Briefing(**{**defaults, **overrides})

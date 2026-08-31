@@ -89,7 +89,7 @@ process, not only TestClient)
 
 ---
 
-## Phase 2 — CSV persistence, retention, atomic writes, locking
+## Phase 2 — CSV persistence, retention, atomic writes, locking ✅
 
 **Goal:** durable, crash-safe, self-pruning storage behind a swappable interface.
 
@@ -106,7 +106,12 @@ UTC date) · `test_idempotency` — completed briefing returns `already_complete
 corrupt CSV → `CSV_READ_FAILED`, file preserved, pipeline continues · concurrent run rejected
 
 **Exit criteria:** kill -9 simulation during write never corrupts a CSV · retention exact at the
-31-day boundary · second same-day run does not re-send
+31-day boundary · second same-day run does not re-send — **met**
+
+> **Decision:** `sources.csv` is exempt from the 31-day cutoff. It is a registry keyed by domain,
+> not a time series: `reliability_score` is accumulated evidence that Phase 5 ranking depends on,
+> and pruning it monthly would reset every source's reputation and flatten source-quality
+> weighting. Its size is bounded by distinct domains, not by time.
 
 ---
 
@@ -260,8 +265,8 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 |---|---|
 | 0 — Environment & scaffold | ✅ complete |
 | 1 — Config, API, auth | ✅ complete |
-| 2 — CSV persistence | next |
-| 3 — Source discovery | not started |
+| 2 — CSV persistence | ✅ complete |
+| 3 — Source discovery | next |
 | 4 — Dedup & clustering | not started |
 | 5 — Ranking | not started |
 | 6 — AI layer | not started |
