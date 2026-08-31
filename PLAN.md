@@ -170,7 +170,7 @@ over 25 articles.
 
 ---
 
-## Phase 5 — Ranking (global + niche, fully separate)
+## Phase 5 — Ranking (global + niche, fully separate) ✅
 
 **Goal:** measurable signals pick the topics — not the model.
 
@@ -185,7 +185,21 @@ reachable from the global ranker** · momentum: rising topic outranks equally-po
 missing history degrades to zero velocity, no crash · high-reliability pair outranks low-reliability crowd
 
 **Exit criteria:** global and niche selections provably independent · scores reproducible on fixed
-input · absent history never crashes ranking
+input · absent history never crashes ranking — **met**. Independence is enforced structurally: the
+contamination test AST-parses the global ranker's whole import path and asserts `rank_global` has no
+profile parameter. Verified it fails when contamination is deliberately injected.
+
+> **Deviation for review — Creative Radar eligibility gate.** PRD §22 weights are applied unchanged
+> (relevance stays 10%), but `select_niche_top` additionally excludes topics with zero founder
+> relevance. A live run put *"Love Island USA Returns for Season 8 Reunion"* at the top of Creative
+> Radar on trade-press coverage and recency alone. At 10% of the weight, relevance cannot keep an
+> unrelated story out. PRD §2 defines this section as the five most *relevant* topics, so relevance
+> is treated as section membership, not just a ranking signal. Ranking still scores every topic and
+> `trend_scores.csv` still records them — only selection is gated.
+
+> **Honesty note:** recency, breadth and velocity are measured. **Engagement and significance are
+> proxies** (outlet count, Google Trends presence, source quality, cross-desk spread) — this system
+> has no social APIs. The distinction is documented in `app/rank/signals.py` rather than buried.
 
 ---
 
@@ -283,8 +297,8 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | 2 — CSV persistence | ✅ complete |
 | 3 — Source discovery | ✅ complete |
 | 4 — Dedup & clustering | ✅ complete |
-| 5 — Ranking | next |
-| 6 — AI layer | not started |
+| 5 — Ranking | ✅ complete |
+| 6 — AI layer | next |
 | 7 — Email | not started |
 | 8 — Orchestration | not started |
 | 9 — Deployment | not started |
