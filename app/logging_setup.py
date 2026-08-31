@@ -82,6 +82,12 @@ def configure_logging(secret_values: list[str] | None = None, level: int = loggi
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
 
+    # Telugu headlines reach the logs. A Windows console defaults to cp1252, which
+    # cannot encode them -- logging swallows the UnicodeEncodeError and the line is
+    # lost. Render is already UTF-8, so this is a no-op there.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
     handler.addFilter(SecretRedactionFilter(secret_values or []))
