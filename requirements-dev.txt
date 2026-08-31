@@ -1,0 +1,9 @@
+# Development & test dependencies
+-r requirements.txt
+
+pytest==8.3.4
+pytest-asyncio==0.25.2
+pytest-cov==6.0.0
+respx==0.22.0          # httpx mocking — no real API credits spent in tests
+freezegun==1.5.1       # deterministic time for retention / idempotency tests
+ruff==0.9.2            # lint + format

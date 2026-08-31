@@ -1,0 +1,27 @@
+[project]
+name = "melbourne-mama-trends"
+version = "0.1.0"
+description = "Daily global + niche trend intelligence briefing for Melbourne Mama Creative Space"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"
+markers = [
+    "unit: fast, no I/O, no network",
+    "integration: crosses module boundaries, still fully mocked",
+    "live: hits real external services — never run in CI",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S"]
+ignore = ["S101"]  # assert is expected in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]  # hardcoded test secrets are fine
