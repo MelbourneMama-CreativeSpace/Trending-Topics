@@ -519,3 +519,100 @@ async def test_retention_runs_before_collection(build, repo):
     await runner.run()
 
     assert "ancient" not in {a.id for a in deps.repo.read(Dataset.ARTICLES)}
+
+
+# --- topic identity across runs (PRD 26) ------------------------------------
+
+
+class ShiftingCollection(FakeCollection):
+    """Same stories, reworded on the second day.
+
+    This is what actually happens in production: a cluster's representative article
+    changes, so it mints a different topic_id while still reconciling to yesterday's
+    identity. A single run cannot expose an ordering bug between minting and
+    reconciliation, because with an empty topics.csv nothing is ever reassigned.
+    """
+
+    DAY_TWO = [
+        "Central bank interest rates unchanged as governors split",
+        "Wildfire evacuation widens across southern coastal towns",
+        "Polling timetable confirmed by the election commission",
+        "Regulator clears the energy firms merger",
+        "Safety inspection failure keeps the ferry service suspended",
+        "Telugu short film wins a place at an international festival",
+        "Melbourne film festival programme revealed for the year",
+        "Creator economy growth shifts to non-metro cities",
+        "Podcast revenue climbs for a fourth year",
+        "Short film fund launched by a filmmaking collective",
+    ]
+
+    async def collect_all(self, http, now, tz):
+        if self.calls >= 1:
+            original, HEADLINES[:] = HEADLINES[:], self.DAY_TWO
+            try:
+                return await super().collect_all(http, now, tz)
+            finally:
+                HEADLINES[:] = original
+        return await super().collect_all(http, now, tz)
+
+
+@pytest.mark.integration
+async def test_trend_scores_and_topics_agree_on_topic_ids_across_days(build):
+    """Regression, and the reason _persist_analysis pins its ordering.
+
+    reconcile() reassigns a cluster topic_id to the identity it carried yesterday.
+    Building the trend-score rows before reconciliation stamped them with the freshly
+    minted id while topics.csv recorded the carried-over one. The two files disagreed,
+    tomorrow's history lookup matched nothing, and velocity sat at its neutral value
+    forever -- momentum silently never worked, and none of it is visible on day one.
+    """
+    runner, deps = build(collection=ShiftingCollection(dt.datetime.now(IST)))
+
+    await runner.run()
+    await runner.run(force=True)
+
+    topic_ids = {t.topic_id for t in deps.repo.read(Dataset.TOPICS)}
+    score_ids = {s.topic_id for s in deps.repo.read(Dataset.TREND_SCORES)}
+
+    assert score_ids, "the run must record trend scores"
+    orphans = score_ids - topic_ids
+    assert not orphans, (
+        f"{len(orphans)} scored topics have no matching identity in topics.csv; "
+        "tomorrow's momentum lookup would silently find nothing"
+    )
+
+
+@pytest.mark.integration
+async def test_yesterdays_scores_are_findable_today(build):
+    """The end-to-end form of the same invariant: history must actually resolve."""
+    from app.rank.history import load_previous_scores
+
+    runner, deps = build(collection=ShiftingCollection(dt.datetime.now(IST)))
+    await runner.run()
+    await runner.run(force=True)
+
+    # Age the stored scores by a day so they count as history for the next run.
+    aged = deps.repo.read(Dataset.TREND_SCORES)
+    for row in aged:
+        row.date = row.date - dt.timedelta(days=1)
+    deps.repo.write(Dataset.TREND_SCORES, aged)
+
+    today = dt.datetime.now(IST).date()
+    history = load_previous_scores(deps.repo, Section.GLOBAL, today)
+    known_topics = {t.topic_id for t in deps.repo.read(Dataset.TOPICS)}
+
+    assert history, "yesterday's scores must be loadable"
+    assert set(history) <= known_topics, "history keys must match stored topic identities"
+
+
+@pytest.mark.integration
+async def test_only_selected_topics_are_persisted(build):
+    """Unselected clusters can never match history, because trend scores exist only
+    for selected ones. Storing all ~900 would add megabytes of git history for nothing.
+    """
+    runner, deps = build()
+
+    await runner.run()
+
+    stored = deps.repo.read(Dataset.TOPICS)
+    assert len(stored) <= 10, f"expected at most the selected topics, got {len(stored)}"
