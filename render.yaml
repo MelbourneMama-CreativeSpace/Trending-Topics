@@ -1,0 +1,70 @@
+# Render blueprint (PRD 54).
+#
+# Render handles everything except scheduling: API, collection, ranking, AI, email and
+# persistence. GitHub Actions only fires the HTTP request (PRD 53).
+#
+# Every secret below is marked `sync: false`, which means Render prompts for it in the
+# dashboard rather than reading it from this file. Nothing secret is ever committed.
+
+services:
+  - type: web
+    name: melbourne-mama-morning-intelligence
+    runtime: python
+    plan: free
+    region: singapore # closest region to IST; keeps the 07:30 send prompt
+    branch: main
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+
+      # --- Endpoint auth (PRD 50) ---
+      - key: AGENT_SECRET
+        sync: false
+
+      # --- AI gateway (PRD 28) ---
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: moonshotai/kimi-k2
+      - key: OPENROUTER_BASE_URL
+        value: https://openrouter.ai/api/v1
+
+      # --- Email (PRD 46) ---
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: SENDER_EMAIL
+        sync: false
+      - key: RECIPIENT_EMAIL
+        sync: false
+
+      # --- Behaviour (PRD 55). Amendment A1: IST, not Australia/Melbourne. ---
+      - key: TIMEZONE
+        value: Asia/Kolkata
+      - key: GLOBAL_TOP_N
+        value: "5"
+      - key: NICHE_TOP_N
+        value: "5"
+      - key: DATA_RETENTION_DAYS
+        value: "31"
+
+      # --- Git-backed persistence (PRD 8) ---
+      # Without GITHUB_TOKEN the service still runs, but data/*.csv is wiped on every
+      # redeploy and the momentum signal resets with it.
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_DATA_REPO
+        value: MelbourneMama-CreativeSpace/Trending-Topics
+      - key: GITHUB_DATA_BRANCH
+        value: main
+
+      # --- Optional source providers. RSS needs none of these. ---
+      - key: NEWS_API_KEY
+        sync: false
+      - key: SEARCH_API_KEY
+        sync: false

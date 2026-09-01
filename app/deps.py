@@ -22,6 +22,7 @@ from app.mailer import ResendSender
 from app.models import Section
 from app.pipeline import BriefingRunner, PipelineDeps
 from app.storage import LocalCsvBackend, Repository
+from app.storage.github_sync import GitHubSync
 
 DATA_DIR = Path("data")
 
@@ -69,8 +70,27 @@ def build_runner(
         logger=log,
     )
 
+    # PRD 8: git-backed durability. Absent a token the pipeline runs local-only,
+    # which is correct on a host with a persistent disk and for local development --
+    # it just means history does not survive a Render redeploy.
+    sync = None
+    if settings.github_token:
+        sync = GitHubSync(
+            token=settings.github_token.get_secret_value(),
+            repo=settings.github_data_repo,
+            branch=settings.github_data_branch,
+            data_dir=data_dir,
+            logger=log,
+        )
+    else:
+        log.warning(
+            "GIT_SYNC_DISABLED reason=no_github_token "
+            "detail=history will not survive a redeploy"
+        )
+
     deps = PipelineDeps(
         settings=settings,
+        sync=sync,
         repo=Repository(
             LocalCsvBackend(data_dir, logger=log),
             tz=settings.tz,

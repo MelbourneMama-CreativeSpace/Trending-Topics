@@ -1,0 +1,63 @@
+name: Daily Morning Brief
+
+# GitHub Actions only schedules and fires one HTTP request (PRD 53). No collection,
+# no OpenRouter, no email, no CSV handling -- all of that lives on Render.
+#
+# The cron is UTC. GitHub Actions has no timezone option, despite what the PRD's
+# example YAML suggests; a `timezone:` key here is silently ignored. IST is a fixed
+# UTC+5:30 with no daylight saving, so 02:00 UTC is 07:30 IST every day of the year.
+# (Under Australia/Melbourne this would have needed seasonal correction.)
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC = 07:30 IST, year-round
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build the briefing but do not send it"
+        type: boolean
+        default: false
+      force:
+        description: "Ignore duplicate-briefing protection"
+        type: boolean
+        default: false
+
+# Two mornings must never overlap; the backend also guards this with its own lock.
+concurrency:
+  group: daily-brief
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Trigger the briefing
+        env:
+          AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
+          RENDER_URL: ${{ secrets.RENDER_URL }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${RENDER_URL}" ]; then
+            echo "::error::RENDER_URL secret is not set"
+            exit 1
+          fi
+
+          # Render's free tier spins down when idle and takes ~50s to wake. Warm it
+          # first so the briefing request is not competing with a cold start.
+          echo "Waking the service..."
+          curl -sS --max-time 120 --retry 3 --retry-delay 10 \
+            "${RENDER_URL}/health" || echo "health check did not respond; continuing"
+
+          echo "Requesting the briefing..."
+          # --fail-with-body makes the step fail on the 500 the API returns for a
+          # failed run, so a morning with no email shows up red rather than green.
+          curl -sS --fail-with-body \
+            --max-time 900 \
+            --request POST \
+            --header "Authorization: Bearer ${AGENT_SECRET}" \
+            "${RENDER_URL}/api/daily-brief?dry_run=${DRY_RUN}&force=${FORCE}"

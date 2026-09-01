@@ -291,7 +291,7 @@ warning rather than a failure.
 
 ---
 
-## Phase 9 — Deployment
+## Phase 9 — Deployment ✅ (built; live verification pending)
 
 **Goal:** it runs itself at 7:30 AM IST.
 
@@ -305,6 +305,27 @@ duplicate protection verified in production
 
 **Exit criteria:** real email arrives, correct on desktop and mobile, every story has working source
 links, CSVs persist across a redeploy, schedule verified in IST.
+
+**Built and unit-verified.** The sync client was checked against the live GitHub Contents API
+(auth, SHA capture, base64 decode, first-run 404 path). Remaining criteria need a deployed service
+and are blocked on two things only the founder can do:
+
+1. **Verify a sending domain** at resend.com/domains — a subdomain such as
+   `updates.melbournemama.org`, never the root, which already carries Google Workspace SPF.
+2. **Create a `GITHUB_TOKEN`** (fine-grained PAT, Contents: read and write) for git-backed history.
+
+> **Bug found during this phase — silent momentum failure.** `reconcile()` reassigns a cluster's
+> `topic_id` to the identity it carried yesterday. Trend-score rows were being built *before*
+> reconciliation, so they recorded the freshly minted id while `topics.csv` recorded the carried-over
+> one. The two files disagreed, tomorrow's history lookup matched nothing, and velocity would have
+> sat at its neutral value forever — PRD §26 momentum silently never working. Invisible on day one.
+> Reproducing it needed a two-day test with reworded headlines; the first regression test written
+> passed even with the bug reintroduced.
+
+> **`articles.csv` retention cut from 2000 rows to 400.** Nothing reads it back — it exists because
+> PRD §12 defines the schema — and every row is committed to git on every run. At 2000 it added
+> 630KB of git history daily. Only *selected* topics are persisted now too, for the same reason:
+> an unselected cluster can never match history, so storing ~900 per run was megabytes for nothing.
 
 ---
 
@@ -329,4 +350,4 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | 6 — AI layer | ✅ complete |
 | 7 — Email | ✅ complete |
 | 8 — Orchestration | ✅ complete |
-| 9 — Deployment | next |
+| 9 — Deployment | ✅ built, live verification pending |

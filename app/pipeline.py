@@ -47,6 +47,7 @@ from app.rank.history import load_previous_scores
 from app.rank.profile import DEFAULT_PROFILE, FounderProfile
 from app.run_context import generate_run_id
 from app.storage import Dataset, Repository
+from app.storage.github_sync import GitHubSync, build_github_client
 
 # PRD 72: the whole request has a ceiling. PRD 81 targets 2-4 minutes, so this leaves
 # generous headroom while still failing rather than hanging forever.
@@ -56,8 +57,11 @@ DEFAULT_TIMEOUT_SECONDS = 600
 # sections there is no briefing worth sending.
 MIN_TOTAL_TOPICS = 3
 
-# Cap on what articles.csv retains, so a month of history stays a sane file size.
-MAX_STORED_ARTICLES = 2000
+# Cap on what articles.csv retains. Nothing reads this file back -- it exists because
+# PRD 12 defines the schema -- and every row is committed to git on every run, so 2000
+# rows meant 630KB of new git history daily. 400 keeps the schema honest at a fraction
+# of the cost.
+MAX_STORED_ARTICLES = 400
 
 LOCK_FILENAME = "run.lock"
 
@@ -73,8 +77,12 @@ class PipelineDeps:
     sender: EmailSender
     data_dir: Path
     profile: FounderProfile = DEFAULT_PROFILE
+    sync: GitHubSync | None = None
+    """Git-backed durability (PRD 8). None means local-only, which is correct for
+    tests and for any host with a persistent disk."""
     http_factory: object = None
     mail_factory: object = None
+    github_factory: object = None
 
 
 @dataclass
@@ -179,6 +187,10 @@ class BriefingRunner:
         briefing_id = build_briefing_id(now.date(), settings.timezone)
 
         with ExecutionLock(deps.data_dir / LOCK_FILENAME, run_id=run_id, logger=self._logger):
+            # Restore history before anything reads it. A failed pull is survivable:
+            # the run continues on local state and only loses momentum accuracy.
+            await self._pull_history(log)
+
             # PRD 48, 73: idempotent for the day unless explicitly forced.
             if not force and deps.repo.was_already_delivered(briefing_id):
                 log.event(LogEvent.SKIPPED, reason=ErrorCode.DUPLICATE_BRIEFING.value)
@@ -187,74 +199,126 @@ class BriefingRunner:
                     duration_seconds=time.monotonic() - started,
                 )
 
-            deps.repo.upsert_briefing(BriefingRecord(
-                briefing_id=briefing_id, briefing_date=now.date(),
-                timezone=settings.timezone, status=BriefingStatus.STARTED, started_at=now,
-            ))
+            try:
+                return await self._work(run_id, log, now, started, briefing_id,
+                                        dry_run=dry_run)
+            finally:
+                # PRD 8: the day's history must survive a Render redeploy whether the
+                # run succeeded or not. A failed run that never records its failure
+                # would be silently re-sent tomorrow.
+                await self._push_history(log, now)
 
-            log.event(LogEvent.CLEANUP_STARTED)
-            cleanup = deps.repo.cleanup_old_data(now)
-            log.event(LogEvent.CLEANUP_COMPLETED,
-                      cutoff=cleanup.cutoff_date, removed=cleanup.total_removed)
+    async def _work(
+        self,
+        run_id: str,
+        log: RunLogger,
+        now: dt.datetime,
+        started: float,
+        briefing_id: str,
+        *,
+        dry_run: bool,
+    ) -> RunOutcome:
+        deps = self._deps
+        settings = deps.settings
 
-            reliability, source_types = self._reliability()
+        deps.repo.upsert_briefing(BriefingRecord(
+            briefing_id=briefing_id, briefing_date=now.date(),
+            timezone=settings.timezone, status=BriefingStatus.STARTED, started_at=now,
+        ))
 
-            collected = await self._collect(log, now, settings)
-            update_registry(
-                deps.repo, [o for r in collected.values() for o in r.outcomes], now
+        log.event(LogEvent.CLEANUP_STARTED)
+        cleanup = deps.repo.cleanup_old_data(now)
+        log.event(LogEvent.CLEANUP_COMPLETED,
+                  cutoff=cleanup.cutoff_date, removed=cleanup.total_removed)
+
+        reliability, source_types = self._reliability()
+
+        collected = await self._collect(log, now, settings)
+        update_registry(
+            deps.repo, [o for r in collected.values() for o in r.outcomes], now
+        )
+
+        selections, _clusters = self._rank(
+            log, collected, reliability, source_types, now
+        )
+        # Reconciles topic identity, then builds trend scores from the reconciled ids.
+        # The order matters -- see the docstring.
+        self._persist_analysis(log, collected, selections, now)
+
+        result, spark = await self._research(log, selections)
+
+        total = result.succeeded
+        if total < MIN_TOTAL_TOPICS:
+            # PRD 31: refuse rather than pad. Fewer than three verified topics is
+            # not a briefing, and inventing the rest is never an option.
+            raise BriefingError(
+                ErrorCode.NO_USABLE_NEWS,
+                f"only {total} verified topics, minimum is {MIN_TOTAL_TOPICS}",
+                severity=Severity.CRITICAL,
             )
 
-            selections, clusters, scores = self._rank(
-                log, collected, reliability, source_types, now
-            )
-            self._persist_analysis(collected, clusters, scores, now)
+        briefing = Briefing(
+            briefing_date=now.date(), timezone=settings.timezone,
+            global_topics=result.global_topics, niche_topics=result.niche_topics,
+            spark=spark, expected_global=settings.global_top_n,
+            expected_niche=settings.niche_top_n, generated_at=now,
+        )
+        html, text = render_html(briefing), render_text(briefing)
+        log.event(LogEvent.EMAIL_RENDERED,
+                  html_bytes=len(html), text_bytes=len(text), partial=briefing.is_partial)
 
-            result, spark = await self._research(log, selections)
+        send = await self._send(log, briefing, html, text, dry_run=dry_run)
 
-            total = result.succeeded
-            if total < MIN_TOTAL_TOPICS:
-                # PRD 31: refuse rather than pad. Fewer than three verified topics is
-                # not a briefing, and inventing the rest is never an option.
-                raise BriefingError(
-                    ErrorCode.NO_USABLE_NEWS,
-                    f"only {total} verified topics, minimum is {MIN_TOTAL_TOPICS}",
-                    severity=Severity.CRITICAL,
-                )
+        status = self._final_status(briefing, dry_run)
+        deps.repo.upsert_briefing(BriefingRecord(
+            briefing_id=briefing_id, briefing_date=now.date(),
+            timezone=settings.timezone,
+            status=BriefingStatus.PARTIAL if briefing.is_partial else BriefingStatus.COMPLETED,
+            started_at=now, completed_at=dt.datetime.now(settings.tz),
+            global_count=len(result.global_topics),
+            niche_count=len(result.niche_topics),
+            email_status=EmailStatus.SKIPPED if dry_run else EmailStatus.SENT,
+            email_message_id=send.message_id,
+        ))
 
-            briefing = Briefing(
-                briefing_date=now.date(), timezone=settings.timezone,
-                global_topics=result.global_topics, niche_topics=result.niche_topics,
-                spark=spark, expected_global=settings.global_top_n,
-                expected_niche=settings.niche_top_n, generated_at=now,
-            )
-            html, text = render_html(briefing), render_text(briefing)
-            log.event(LogEvent.EMAIL_RENDERED,
-                      html_bytes=len(html), text_bytes=len(text), partial=briefing.is_partial)
+        duration = time.monotonic() - started
+        log.event(LogEvent.END, status=status, duration=f"{duration:.1f}s")
 
-            send = await self._send(log, briefing, html, text, dry_run=dry_run)
+        return RunOutcome(
+            success=True, run_id=run_id, status=status,
+            global_topics=len(result.global_topics),
+            niche_topics=len(result.niche_topics),
+            email_sent=not dry_run, duration_seconds=duration,
+            warnings=self._warnings(briefing, spark),
+        )
 
-            status = self._final_status(briefing, dry_run)
-            deps.repo.upsert_briefing(BriefingRecord(
-                briefing_id=briefing_id, briefing_date=now.date(),
-                timezone=settings.timezone,
-                status=BriefingStatus.PARTIAL if briefing.is_partial else BriefingStatus.COMPLETED,
-                started_at=now, completed_at=dt.datetime.now(settings.tz),
-                global_count=len(result.global_topics),
-                niche_count=len(result.niche_topics),
-                email_status=EmailStatus.SKIPPED if dry_run else EmailStatus.SENT,
-                email_message_id=send.message_id,
-            ))
+    # --- git-backed history (PRD 8) -----------------------------------------
 
-            duration = time.monotonic() - started
-            log.event(LogEvent.END, status=status, duration=f"{duration:.1f}s")
+    async def _pull_history(self, log: RunLogger) -> None:
+        if self._deps.sync is None:
+            return
+        factory = self._deps.github_factory or build_github_client
+        try:
+            async with factory() as http:
+                await self._deps.sync.pull(http)
+        except Exception as exc:  # noqa: BLE001
+            # History improves ranking; it is never required to produce a briefing.
+            log.warning(LogEvent.SKIPPED, reason="history_pull_failed",
+                        detail=type(exc).__name__)
 
-            return RunOutcome(
-                success=True, run_id=run_id, status=status,
-                global_topics=len(result.global_topics),
-                niche_topics=len(result.niche_topics),
-                email_sent=not dry_run, duration_seconds=duration,
-                warnings=self._warnings(briefing, spark),
-            )
+    async def _push_history(self, log: RunLogger, now: dt.datetime) -> None:
+        if self._deps.sync is None:
+            return
+        factory = self._deps.github_factory or build_github_client
+        message = f"data: briefing {now.date().isoformat()}"
+        try:
+            async with factory() as http:
+                await self._deps.sync.push(http, message)
+        except Exception as exc:  # noqa: BLE001
+            # Losing one day of history is bad; losing today's briefing to a GitHub
+            # outage would be worse.
+            log.warning(LogEvent.SKIPPED, reason="history_push_failed",
+                        detail=type(exc).__name__)
 
     # --- steps ---------------------------------------------------------------
 
@@ -279,7 +343,7 @@ class BriefingRunner:
 
     def _rank(self, log, collected, reliability, source_types, now):
         settings = self._deps.settings
-        selections, all_clusters, all_scores = {}, [], []
+        selections, all_clusters = {}, []
 
         for section in (Section.GLOBAL, Section.NICHE):
             articles = collected[section].articles
@@ -306,22 +370,44 @@ class BriefingRunner:
 
             selections[section] = chosen
             all_clusters.extend(clusters)
-            all_scores.extend(t.to_trend_score(now.date(), section) for t in chosen)
 
-        return selections, all_clusters, all_scores
+        return selections, all_clusters
 
-    def _persist_analysis(self, collected, clusters, scores, now) -> None:
+    def _persist_analysis(self, log, collected, selections, now) -> None:
         """PRD 90: a CSV write failure must abort before success is recorded.
 
-        These writes happen before the email is sent for exactly that reason -- a
-        run that cannot persist its history should not be delivering a briefing that
+        These writes happen before the email is sent for exactly that reason -- a run
+        that cannot persist its history should not be delivering a briefing that
         tomorrow's momentum calculation will silently disagree with.
+
+        **Reconciliation happens before scores are built.** `reconcile` reassigns a
+        cluster's `topic_id` to the identity it carried yesterday, so building the
+        trend-score rows first would stamp them with the freshly minted id while
+        topics.csv recorded the carried-over one. The two files would disagree, and
+        tomorrow's `load_previous_scores` would match nothing -- velocity would sit at
+        its neutral value forever and momentum would silently never work. That failure
+        is invisible on day one, which is exactly why the order is pinned by a test.
+
+        Only *selected* topics are persisted. Trend scores exist only for topics that
+        were selected, so an unselected cluster can never match history -- storing all
+        ~900 of them per run would add megabytes of git history for nothing.
         """
         repo = self._deps.repo
+        chosen = [topic for section_topics in selections.values() for topic in section_topics]
+
         existing = list(repo.read(Dataset.TOPICS))
-        reconciled = reconcile(clusters, existing, now)
+        reconciled = reconcile([topic.cluster for topic in chosen], existing, now)
         repo.write(Dataset.TOPICS, merge_topic_history(existing, reconciled.topics))
+        log.event(LogEvent.CLUSTERING_COMPLETED, carried_over=reconciled.carried_over,
+                  newly_seen=reconciled.newly_seen)
+
+        scores = [
+            topic.to_trend_score(now.date(), section)
+            for section, section_topics in selections.items()
+            for topic in section_topics
+        ]
         repo.append(Dataset.TREND_SCORES, scores)
+
         repo.write(
             Dataset.ARTICLES,
             [a for r in collected.values() for a in r.articles][:MAX_STORED_ARTICLES],
