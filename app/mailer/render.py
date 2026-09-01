@@ -190,7 +190,7 @@ def render_text(briefing: Briefing) -> str:
                 lines.append("                    (an AI suggestion, not reporting)")
             if topic.uncertainties:
                 heading = "SOURCES DISAGREE" if topic.conflict_detected else "STILL UNCLEAR"
-                lines.append(f"    {heading:15} {'; '.join(topic.uncertainties)}")
+                lines.append(f"    {heading:15} {'; '.join(topic.uncertainties[:2])}")
             lines.append("    SOURCES")
             for source in topic.sources:
                 if is_valid_url(source.url):

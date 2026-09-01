@@ -34,14 +34,16 @@ accurately and without embellishment.
 
 Return a single JSON object with exactly these keys:
   headline         - one clear sentence naming the story, at most 20 words
-  what_happened    - 3-4 sentences of plain factual summary
-  why_trending     - 2 sentences on why this is being widely reported now
-  why_it_matters   - 1-2 sentences on the broader significance
-  key_facts        - up to 6 short factual strings drawn from the headlines
-  uncertainties    - up to 4 strings; anything the sources disagree on or leave unclear
+  what_happened    - 2 short sentences of plain factual summary, 40 words maximum
+  why_trending     - ONE short sentence on why this is being reported now
+  why_it_matters   - ONE short sentence on the broader significance
+  key_facts        - up to 3 short factual strings drawn from the headlines
+  uncertainties    - up to 2 strings; only genuine disagreements or gaps
   conflict_detected - true if the sources contradict each other
   confidence       - 0.0 to 1.0, your confidence in this summary
   source_indices   - the numbers of the sources you used, e.g. [1, 3]
+
+Be concise. Every sentence must earn its place in a five-minute email.
 
 Output JSON only. No prose, no markdown fences."""
 
@@ -54,19 +56,22 @@ Melbourne creative scene, with an interest in AI in creative production.
 
 Return a single JSON object with exactly these keys:
   headline         - one clear sentence naming the story, at most 20 words
-  what_happened    - 3-4 sentences of plain factual summary
-  why_trending     - 2 sentences on why this is being reported now
-  why_it_matters   - 1-2 sentences on why it matters to this founder specifically.
-                     Be honest: if the connection is weak, say so plainly rather than
-                     inventing relevance.
-  creative_angle   - one concrete idea this suggests, clearly framed as a suggestion
-                     rather than a fact. Name a format: podcast, short film, interview,
-                     YouTube video, documentary, social content or experiment.
-  key_facts        - up to 6 short factual strings drawn from the headlines
-  uncertainties    - up to 4 strings; anything unclear or contradictory
+  what_happened    - 2 short sentences of plain factual summary, 40 words maximum
+  why_trending     - ONE short sentence on why this is being reported now
+  why_it_matters   - ONE short sentence on why it matters to this founder
+                     specifically. Be honest: if the connection is weak, say so
+                     plainly rather than inventing relevance.
+  creative_angle   - ONE short sentence: a concrete idea, framed as a suggestion
+                     rather than a fact, naming a format (podcast, short film,
+                     interview, YouTube video, documentary, social content,
+                     experiment).
+  key_facts        - up to 3 short factual strings drawn from the headlines
+  uncertainties    - up to 2 strings; only genuine disagreements or gaps
   conflict_detected - true if the sources contradict each other
   confidence       - 0.0 to 1.0
   source_indices   - the numbers of the sources you used, e.g. [1, 3]
+
+Be concise. Every sentence must earn its place in a five-minute email.
 
 Output JSON only. No prose, no markdown fences."""
 
@@ -80,12 +85,14 @@ From today's briefing topics, propose ONE genuinely useful creative opportunity.
 It must be specific and actionable, not a generic observation.
 
 Return a single JSON object with exactly these keys:
-  idea       - the opportunity, 2-3 sentences
+  idea       - the opportunity, 2 short sentences
   format     - one of: podcast, short film, reel, interview, documentary, experiment
-  rationale  - 1-2 sentences on why today's news makes this timely
+  rationale  - ONE short sentence on why today's news makes this timely
   confidence - 0.0 to 1.0. Score this honestly. If nothing in today's news supports a
                genuinely useful idea, return a confidence below 0.4 rather than
                forcing one.
+
+Be concise. Every sentence must earn its place in a five-minute email.
 
 Output JSON only. No prose, no markdown fences."""
 

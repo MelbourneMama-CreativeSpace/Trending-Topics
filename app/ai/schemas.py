@@ -12,8 +12,8 @@ model cannot fabricate a reference it was never asked to produce (PRD 35).
 from pydantic import BaseModel, ConfigDict, Field
 
 MAX_HEADLINE_LENGTH = 200
-MAX_KEY_FACTS = 6
-MAX_UNCERTAINTIES = 4
+MAX_KEY_FACTS = 4
+MAX_UNCERTAINTIES = 3
 
 
 class BriefSource(BaseModel):
