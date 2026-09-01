@@ -14,6 +14,7 @@ Two tiers of config:
 """
 
 from functools import lru_cache
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, field_validator
@@ -44,7 +45,12 @@ class Settings(BaseSettings):
     openrouter_model: str = "moonshotai/kimi-k2"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
-    # --- Email: Resend (PRD 46) ---
+    # --- Email (PRD 46) ---
+    email_provider: Literal["sendgrid", "resend"] = "sendgrid"
+    """Which adapter to use. Defaults to SendGrid because its Single Sender
+    Verification authorises one address by emailing it a confirmation link, with no
+    DNS records -- so it works before a sending domain exists. Resend needs a
+    DNS-verified domain, which is the better long-term answer once one is set up."""
     email_api_key: SecretStr | None = None
     sender_email: str | None = None
     recipient_email: str | None = None
