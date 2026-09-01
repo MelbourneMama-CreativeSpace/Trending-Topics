@@ -222,3 +222,42 @@ def test_untrustworthy_publisher_url_falls_back_to_the_link_host():
     )
 
     assert article.source_domain == "example.com"
+
+
+@pytest.mark.unit
+def test_trends_entry_uses_its_own_publisher_not_the_feed_name():
+    """Regression: a live run cited a Michigan Advance article as published by
+    "Google Trends (US)" -- a false attribution printed in the email.
+
+    Google Trends supplies the real outlet in <ht:news_item_source>.
+    """
+    from app.collect.feeds import FeedSpec
+    from app.collect.rss import _entry_to_raw
+    from app.models import SourceType
+
+    feed = FeedSpec("https://trends.google.com/trending/rss?geo=US", "Google Trends (US)",
+                    SourceType.SEARCH, "trends", 0.6)
+    entry = {
+        "title": "sleeper",
+        "link": "https://trends.google.com/trending/rss?geo=US",
+        "ht_news_item_title": "A real headline about something",
+        "ht_news_item_url": "https://michiganadvance.com/story",
+        "ht_news_item_source": "Michigan Advance",
+    }
+
+    raw = _entry_to_raw(entry, feed)
+
+    assert raw.source_name == "Michigan Advance"
+    assert raw.url == "https://michiganadvance.com/story"
+
+
+@pytest.mark.unit
+def test_regular_feed_still_falls_back_to_its_own_name():
+    from app.collect.feeds import FeedSpec
+    from app.collect.rss import _entry_to_raw
+    from app.models import SourceType
+
+    feed = FeedSpec("https://bbc.co.uk/rss", "BBC News", SourceType.NEWS, "world", 0.95)
+    raw = _entry_to_raw({"title": "A headline", "link": "https://bbc.co.uk/a"}, feed)
+
+    assert raw.source_name == "BBC News"
