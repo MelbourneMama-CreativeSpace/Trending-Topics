@@ -603,3 +603,50 @@ async def test_failed_spark_never_breaks_the_run():
 async def test_spark_is_skipped_when_there_are_no_topics():
     async with build_ai_client() as http:
         assert await AiService(client()).creative_spark(http, []) is None
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_truncated_response_is_reported_as_truncation():
+    """A response cut off at max_tokens is invalid JSON.
+
+    Without this check it surfaces as "malformed JSON", which sends you looking for a
+    prompt or parsing bug when the fix is a larger token budget. That misdiagnosis
+    cost a real debugging cycle on the Creative Spark.
+    """
+    respx.post(ENDPOINT).mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"headline": "cut off here'},
+                         "finish_reason": "length"}]
+        })
+    )
+
+    async with build_ai_client() as http:
+        with pytest.raises(BriefingError) as caught:
+            await client(attempts=1).complete_json(http, "sys", "user")
+
+    assert caught.value.code == ErrorCode.AI_INVALID_RESPONSE
+    assert "truncated" in str(caught.value)
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_a_complete_response_is_not_flagged_as_truncated():
+    respx.post(ENDPOINT).mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{"message": {"content": json.dumps(VALID_BRIEF)},
+                         "finish_reason": "stop"}]
+        })
+    )
+
+    async with build_ai_client() as http:
+        assert await client().complete_json(http, "sys", "user")
+
+
+@pytest.mark.unit
+def test_spark_has_a_larger_token_budget_than_it_needs():
+    """It was marginal at 600 -- fitting on some runs, truncating on others, which
+    reads as flakiness rather than a setting."""
+    from app.ai.service import SPARK_MAX_TOKENS
+
+    assert SPARK_MAX_TOKENS >= 900
