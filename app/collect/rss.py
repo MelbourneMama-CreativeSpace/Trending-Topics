@@ -139,10 +139,18 @@ def _entry_to_raw(entry: dict, feed: FeedSpec) -> RawItem | None:
     if not isinstance(source_block, dict):
         source_block = {}
 
+    # Publisher name, in order of trustworthiness: Google News nests it in <source>,
+    # Google Trends supplies <ht:news_item_source>, and only then do we fall back to
+    # the feed name. Falling back too early attributes a Michigan Advance article to
+    # "Google Trends (US)" -- a false attribution printed in the email.
+    publisher_name = (
+        source_block.get("title") or entry.get("ht_news_item_source") or feed.name
+    )
+
     return RawItem(
         title=title,
         url=url,
-        source_name=source_block.get("title") or feed.name,
+        source_name=publisher_name,
         publisher_url=source_block.get("href") or "",
         published_at=(
             entry.get("published_parsed") or entry.get("updated_parsed") or entry.get("published")

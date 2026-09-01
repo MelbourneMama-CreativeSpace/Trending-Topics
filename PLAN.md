@@ -203,7 +203,7 @@ profile parameter. Verified it fails when contamination is deliberately injected
 
 ---
 
-## Phase 6 — AI layer (OpenRouter / Kimi)
+## Phase 6 — AI layer (OpenRouter / Kimi) ✅
 
 **Goal:** research, summarize, personalize — with zero fabricated sources.
 
@@ -221,7 +221,20 @@ mock article does not alter behaviour · concurrency cap respected. All mocked v
 credits spent in tests.**
 
 **Exit criteria:** no source reaches output that wasn't retrieved · single-topic failure never aborts
-the run · injection attempt provably ineffective
+the run · injection attempt provably ineffective — **met**. Live run: 10/10 topics researched,
+**35 cited URLs, 0 fabricated**, Creative Spark produced, 60s for 11 calls.
+
+> **Model constraint found live:** `moonshotai/kimi-k2` rejects `response_format: json_object`
+> ("does not support feature: structured-outputs"). The parameter is not sent at all — PRD §28
+> requires the model to stay swappable, so support cannot be assumed for whatever is configured
+> next. JSON is enforced by prompt plus defensive parsing, which works with any model.
+
+> **Notes for Phase 7:**
+> - Niche source URLs are `news.google.com/rss/articles/CBMi...` redirects. They resolve correctly
+>   and were genuinely retrieved, but read poorly in an email. Resolving them is cheap for the ~40
+>   selected sources; it would be 1,200 requests at collection time.
+> - Google Trends entries carry `ht_approx_traffic` (e.g. "2000+") — real search volume, which
+>   would strengthen the Phase 5 engagement proxy if wired in later.
 
 ---
 
@@ -298,7 +311,7 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | 3 — Source discovery | ✅ complete |
 | 4 — Dedup & clustering | ✅ complete |
 | 5 — Ranking | ✅ complete |
-| 6 — AI layer | next |
-| 7 — Email | not started |
+| 6 — AI layer | ✅ complete |
+| 7 — Email | next |
 | 8 — Orchestration | not started |
 | 9 — Deployment | not started |
