@@ -650,3 +650,36 @@ def test_spark_has_a_larger_token_budget_than_it_needs():
     from app.ai.service import SPARK_MAX_TOKENS
 
     assert SPARK_MAX_TOKENS >= 900
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_payment_required_is_not_retried():
+    """An exhausted account balance rejects the next attempt too. This arrived in
+    production as three identical topic failures reading AI_INVALID_RESPONSE, with
+    nothing in the log saying the account was out of credit."""
+    route = respx.post(ENDPOINT).mock(
+        return_value=httpx.Response(402, json={"error": {"message": "requires more credits"}})
+    )
+
+    async with build_ai_client() as http:
+        with pytest.raises(BriefingError):
+            await client().complete_json(http, "sys", "user")
+
+    assert route.call_count == 1
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_an_unanticipated_status_logs_its_body(run_log):
+    """A status in neither the retryable nor the non-retryable list is precisely the
+    one whose body we need, because we did not predict it."""
+    respx.post(ENDPOINT).mock(
+        return_value=httpx.Response(418, text="unexpected teapot condition")
+    )
+
+    async with build_ai_client() as http:
+        with pytest.raises(BriefingError):
+            await client(attempts=1).complete_json(http, "sys", "user")
+
+    assert any("teapot" in message for message in run_log.messages)

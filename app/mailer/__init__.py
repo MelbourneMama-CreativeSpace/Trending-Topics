@@ -7,6 +7,7 @@ from app.mailer.sender import (
     ResendSender,
     SendGridSender,
     SendResult,
+    SmtpSender,
     build_mail_client,
     require_send_failure,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "NullSender",
     "ResendSender",
     "SendGridSender",
+    "SmtpSender",
     "SendResult",
     "build_mail_client",
     "build_subject",

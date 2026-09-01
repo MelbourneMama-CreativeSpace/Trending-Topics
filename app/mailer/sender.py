@@ -12,8 +12,11 @@ GitHub Actions surfaces it, rather than a silent morning with no briefing.
 import asyncio
 import logging
 import re
+import smtplib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from email.message import EmailMessage
+from email.utils import make_msgid
 
 import httpx
 
@@ -265,3 +268,124 @@ class SendGridSender(EmailSender):
 
         self._log.error("EMAIL_FAILED attempts=%d error=%s", last.attempts, last.error)
         return last
+
+
+# --- SMTP --------------------------------------------------------------------
+
+DEFAULT_SMTP_HOST = "smtp.gmail.com"
+DEFAULT_SMTP_PORT = 587
+
+# Authentication failures repeat identically, so they are never retried. Everything
+# else SMTP raises -- a dropped connection, a greylisting deferral, a busy server --
+# is worth another attempt.
+_PERMANENT_SMTP_ERRORS = (
+    smtplib.SMTPAuthenticationError,
+    smtplib.SMTPNotSupportedError,
+)
+
+
+class SmtpSender(EmailSender):
+    """Sends over SMTP, e.g. Gmail with an App Password.
+
+    Needs no provider account and no sender verification: the mailbox already belongs
+    to you, so nothing has to be proved to a third party. That makes it the shortest
+    path to a working briefing.
+
+    Two constraints worth knowing before relying on it:
+
+    * **Render's free tier blocks outbound ports 25, 465 and 587.** Ports 465 and 587
+      work on a paid instance; port 25 is blocked on every tier. So this works locally
+      and on paid hosting, and silently times out on a free Render service.
+    * Gmail requires an **App Password** with 2FA enabled. An account password is
+      rejected.
+
+    `smtplib` is synchronous, so the send runs in a worker thread rather than blocking
+    the event loop. For one email a day that is simpler and cheaper than adding an
+    async SMTP dependency.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        attempts: int = DEFAULT_ATTEMPTS,
+        backoff_seconds: float = DEFAULT_BACKOFF_SECONDS,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._host = host
+        self._port = port
+        self._username = username
+        self._password = password
+        self._attempts = attempts
+        self._backoff = backoff_seconds
+        self._timeout = timeout_seconds
+        self._log = logger or logging.getLogger(LOGGER_NAME)
+
+    async def send(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        sender: str,
+        recipient: str,
+        subject: str,
+        html: str,
+        text: str,
+    ) -> SendResult:
+        message = self._build(sender=sender, recipient=recipient, subject=subject,
+                              html=html, text=text)
+        last = SendResult(ok=False, error="no attempt made")
+
+        for attempt in range(1, self._attempts + 1):
+            try:
+                await asyncio.to_thread(self._deliver, message)
+            except _PERMANENT_SMTP_ERRORS as exc:
+                self._log.error("EMAIL_REJECTED reason=%s", type(exc).__name__)
+                return SendResult(
+                    ok=False, error=f"{type(exc).__name__}: {exc}", attempts=attempt
+                )
+            except (OSError, smtplib.SMTPException) as exc:
+                # A free-tier Render service surfaces the port block here, as a
+                # connection timeout rather than an SMTP-level rejection.
+                last = SendResult(
+                    ok=False, error=f"{type(exc).__name__}: {exc}", attempts=attempt
+                )
+            else:
+                message_id = message["Message-ID"] or ""
+                self._log.info("EMAIL_SENT message_id=%s attempts=%d", message_id, attempt)
+                return SendResult(ok=True, message_id=message_id, attempts=attempt)
+
+            if attempt < self._attempts:
+                await asyncio.sleep(self._backoff * (2 ** (attempt - 1)))
+
+        self._log.error("EMAIL_FAILED attempts=%d error=%s", last.attempts, last.error)
+        return last
+
+    def _build(self, *, sender: str, recipient: str, subject: str,
+               html: str, text: str) -> EmailMessage:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = sender
+        message["To"] = recipient
+        message["Message-ID"] = make_msgid(domain="melbournemama.local")
+        # set_content then add_alternative produces multipart/alternative with the
+        # plain part first, which is the order mail clients expect. EmailMessage
+        # handles UTF-8 encoding, which matters because headlines are often Telugu.
+        message.set_content(text)
+        message.add_alternative(html, subtype="html")
+        return message
+
+    def _deliver(self, message: EmailMessage) -> None:
+        """Blocking send, run in a worker thread."""
+        if self._port == 465:
+            with smtplib.SMTP_SSL(self._host, self._port, timeout=self._timeout) as server:
+                server.login(self._username, self._password)
+                server.send_message(message)
+            return
+
+        with smtplib.SMTP(self._host, self._port, timeout=self._timeout) as server:
+            server.starttls()
+            server.login(self._username, self._password)
+            server.send_message(message)

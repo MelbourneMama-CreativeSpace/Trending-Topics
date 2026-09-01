@@ -140,6 +140,15 @@ class OpenRouterClient:
                         ErrorCode.AI_INVALID_RESPONSE, last_error, severity=Severity.ERROR
                     )
                 if response.status_code not in RETRYABLE_STATUS:
+                    # A status in neither list is the one we did not anticipate, so it
+                    # is exactly the case that most needs its body recorded. A 402 for
+                    # an exhausted balance once landed here and read as a malformed
+                    # response.
+                    self._log.error(
+                        "AI_REQUEST_FAILED status=%d body=%s",
+                        response.status_code,
+                        " ".join(response.text[:ERROR_BODY_CHARS].split()),
+                    )
                     raise BriefingError(
                         ErrorCode.AI_INVALID_RESPONSE, last_error, severity=Severity.ERROR
                     )
