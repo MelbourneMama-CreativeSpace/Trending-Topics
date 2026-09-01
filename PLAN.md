@@ -270,7 +270,7 @@ is confirmed at Phase 9 with a real send.
 
 ---
 
-## Phase 8 — Orchestration
+## Phase 8 — Orchestration ✅
 
 **Goal:** the 27-step pipeline, wired and mode-aware.
 
@@ -285,7 +285,9 @@ timeout aborts cleanly and releases the lock · CSV write failure aborts *before
 lock released on every exit path including exceptions
 
 **Exit criteria:** end-to-end dry run under 5 minutes · every PRD §90 failure row exercised ·
-lock never orphaned
+lock never orphaned — **met**. Live dry run through the real HTTP endpoint completed in **114.9s**
+with the full PRD §74 event sequence logged, one AI topic failing and correctly reported as a
+warning rather than a failure.
 
 ---
 
@@ -326,5 +328,5 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | 5 — Ranking | ✅ complete |
 | 6 — AI layer | ✅ complete |
 | 7 — Email | ✅ complete |
-| 8 — Orchestration | next |
-| 9 — Deployment | not started |
+| 8 — Orchestration | ✅ complete |
+| 9 — Deployment | next |
