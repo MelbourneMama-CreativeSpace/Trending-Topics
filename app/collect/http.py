@@ -19,7 +19,10 @@ DEFAULT_TIMEOUT_SECONDS = 15.0
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 # PRD 64: permanent. Retrying a bad key or a dead URL only wastes the run's budget.
-NON_RETRYABLE_STATUS = frozenset({400, 401, 403, 404, 405, 410, 422})
+# 402 is here because an exhausted account balance will reject the next attempt too --
+# and it arrived in production looking like a malformed response, because nothing
+# logged the body of a status that was in neither list.
+NON_RETRYABLE_STATUS = frozenset({400, 401, 402, 403, 404, 405, 410, 422})
 
 DEFAULT_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 1.0

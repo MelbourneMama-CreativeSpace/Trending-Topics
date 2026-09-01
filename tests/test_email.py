@@ -662,3 +662,218 @@ def test_an_unknown_provider_is_rejected_at_startup(configured_env):
 
     with pytest.raises(ValidationError):
         Settings()
+
+
+# --- SMTP adapter (PRD 46, 61) ----------------------------------------------
+
+
+class FakeSmtp:
+    """Stands in for smtplib.SMTP. Records what was sent, or raises on demand."""
+
+    instances: list["FakeSmtp"] = []
+
+    def __init__(self, host, port, timeout=None):
+        self.host, self.port = host, port
+        self.started_tls = False
+        self.logged_in: tuple[str, str] | None = None
+        self.sent: list = []
+        FakeSmtp.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def starttls(self):
+        self.started_tls = True
+
+    def login(self, username, password):
+        self.logged_in = (username, password)
+
+    def send_message(self, message):
+        self.sent.append(message)
+
+
+@pytest.fixture
+def fake_smtp(monkeypatch):
+    import smtplib
+
+    FakeSmtp.instances = []
+    monkeypatch.setattr(smtplib, "SMTP", FakeSmtp)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSmtp)
+    return FakeSmtp
+
+
+def smtp_sender(**overrides):
+    from app.mailer import SmtpSender
+
+    defaults = {
+        "host": "smtp.gmail.com", "port": 587,
+        "username": "someone@gmail.com", "password": "app-password",
+        "backoff_seconds": 0,
+    }
+    return SmtpSender(**{**defaults, **overrides})
+
+
+@pytest.mark.integration
+async def test_smtp_sends_and_authenticates(fake_smtp):
+    async with build_mail_client() as client:
+        result = await smtp_sender().send(client, **SEND_ARGS)
+
+    assert result.ok is True
+    server = fake_smtp.instances[0]
+    assert server.started_tls is True, "port 587 requires STARTTLS"
+    assert server.logged_in == ("someone@gmail.com", "app-password")
+    assert len(server.sent) == 1
+
+
+@pytest.mark.integration
+async def test_smtp_builds_a_multipart_alternative_with_text_first(fake_smtp):
+    """Mail clients pick the last part they can render, so plain text must come
+    first or a text-only client shows nothing useful."""
+    async with build_mail_client() as client:
+        await smtp_sender().send(client, **SEND_ARGS)
+
+    message = fake_smtp.instances[0].sent[0]
+    assert message.get_content_type() == "multipart/alternative"
+    subtypes = [part.get_content_subtype() for part in message.iter_parts()]
+    assert subtypes == ["plain", "html"]
+
+
+@pytest.mark.integration
+async def test_smtp_carries_the_headers(fake_smtp):
+    async with build_mail_client() as client:
+        await smtp_sender().send(client, **SEND_ARGS)
+
+    message = fake_smtp.instances[0].sent[0]
+    assert message["To"] == "founder@example.com"
+    assert message["From"] == "brief@melbournemama.org"
+    assert message["Subject"] == "Test"
+    assert message["Message-ID"]
+
+
+@pytest.mark.integration
+async def test_smtp_handles_telugu_content(fake_smtp):
+    """Headlines are routinely Telugu; the message must encode rather than crash."""
+    args = {**SEND_ARGS, "subject": "తెలుగు సినిమా",
+            "text": "తెలుగు షార్ట్ ఫిల్మ్", "html": "<p>తెలుగు సినిమా</p>"}
+
+    async with build_mail_client() as client:
+        result = await smtp_sender().send(client, **args)
+
+    assert result.ok is True
+    message = fake_smtp.instances[0].sent[0]
+    assert "తెలుగు" in str(message["Subject"])
+
+
+@pytest.mark.integration
+async def test_port_465_uses_implicit_tls_without_starttls(fake_smtp):
+    async with build_mail_client() as client:
+        await smtp_sender(port=465).send(client, **SEND_ARGS)
+
+    server = fake_smtp.instances[0]
+    assert server.port == 465
+    assert server.started_tls is False, "SMTP_SSL is already encrypted"
+
+
+@pytest.mark.integration
+async def test_bad_credentials_are_not_retried(fake_smtp, monkeypatch):
+    """Gmail rejects an account password; only an App Password works. Retrying a
+    rejected credential just burns the run's time budget."""
+    import smtplib
+
+    def refuse(self, username, password):
+        raise smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+    monkeypatch.setattr(FakeSmtp, "login", refuse)
+
+    async with build_mail_client() as client:
+        result = await smtp_sender().send(client, **SEND_ARGS)
+
+    assert result.ok is False
+    assert "SMTPAuthenticationError" in result.error
+    assert len(fake_smtp.instances) == 1, "an auth failure must not be retried"
+
+
+@pytest.mark.integration
+async def test_a_blocked_port_is_retried_then_reported(fake_smtp, monkeypatch):
+    """Render's free tier blocks outbound SMTP, which surfaces here as a connection
+    timeout rather than an SMTP-level rejection."""
+    def refuse(self, host, port, timeout=None):
+        raise TimeoutError("connection timed out")
+
+    monkeypatch.setattr(FakeSmtp, "__init__", refuse)
+
+    async with build_mail_client() as client:
+        result = await smtp_sender().send(client, **SEND_ARGS)
+
+    assert result.ok is False
+    assert "TimeoutError" in result.error
+    assert result.attempts == 3
+
+
+@pytest.mark.integration
+async def test_a_transient_failure_then_success(fake_smtp, monkeypatch):
+    import smtplib
+
+    calls = {"n": 0}
+    original = FakeSmtp.send_message
+
+    def flaky(self, message):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise smtplib.SMTPServerDisconnected("dropped")
+        return original(self, message)
+
+    monkeypatch.setattr(FakeSmtp, "send_message", flaky)
+
+    async with build_mail_client() as client:
+        result = await smtp_sender().send(client, **SEND_ARGS)
+
+    assert result.ok is True
+    assert result.attempts == 2
+
+
+@pytest.mark.unit
+def test_smtp_provider_requires_smtp_credentials_not_an_api_key(configured_env):
+    """Requiring EMAIL_API_KEY under the smtp provider would block a correct setup."""
+    from app.config import get_settings
+
+    configured_env.setenv("EMAIL_PROVIDER", "smtp")
+    configured_env.setenv("SENDER_EMAIL", "a@b.com")
+    configured_env.setenv("RECIPIENT_EMAIL", "c@d.com")
+    get_settings.cache_clear()
+
+    missing = get_settings().missing_pipeline_config()
+
+    assert "SMTP_USERNAME" in missing
+    assert "SMTP_PASSWORD" in missing
+    assert "EMAIL_API_KEY" not in missing
+
+
+@pytest.mark.unit
+def test_smtp_password_is_redacted_from_logs(configured_env):
+    from app.config import get_settings
+
+    configured_env.setenv("EMAIL_PROVIDER", "smtp")
+    configured_env.setenv("SMTP_PASSWORD", "super-secret-app-password")
+    get_settings.cache_clear()
+
+    assert "super-secret-app-password" in get_settings().secret_values()
+
+
+@pytest.mark.unit
+def test_configuration_selects_the_smtp_sender(configured_env):
+    import logging
+
+    from app.config import get_settings
+    from app.deps import _build_sender
+    from app.mailer import SmtpSender
+
+    configured_env.setenv("EMAIL_PROVIDER", "smtp")
+    configured_env.setenv("SMTP_USERNAME", "someone@gmail.com")
+    configured_env.setenv("SMTP_PASSWORD", "app-password")
+    get_settings.cache_clear()
+
+    assert isinstance(_build_sender(get_settings(), logging.getLogger()), SmtpSender)

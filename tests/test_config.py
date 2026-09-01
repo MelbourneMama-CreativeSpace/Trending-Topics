@@ -77,10 +77,15 @@ def test_out_of_range_top_n_is_rejected(configured_env):
 
 @pytest.mark.unit
 def test_missing_pipeline_config_reports_everything_absent(configured_env):
-    """All missing keys at once, so the operator fixes them in one pass."""
-    settings = get_settings()
+    """All missing keys at once, so the operator fixes them in one pass.
 
-    assert settings.missing_pipeline_config() == [
+    The email credential is provider-dependent: naming EMAIL_API_KEY under the smtp
+    provider would send the operator hunting for a key they do not need.
+    """
+    configured_env.setenv("EMAIL_PROVIDER", "sendgrid")
+    get_settings.cache_clear()
+
+    assert get_settings().missing_pipeline_config() == [
         "EMAIL_API_KEY",
         "OPENROUTER_API_KEY",
         "RECIPIENT_EMAIL",
@@ -89,9 +94,35 @@ def test_missing_pipeline_config_reports_everything_absent(configured_env):
 
 
 @pytest.mark.unit
+def test_smtp_provider_asks_for_smtp_credentials(configured_env):
+    configured_env.setenv("EMAIL_PROVIDER", "smtp")
+    get_settings.cache_clear()
+
+    missing = get_settings().missing_pipeline_config()
+
+    assert "SMTP_USERNAME" in missing
+    assert "SMTP_PASSWORD" in missing
+    assert "EMAIL_API_KEY" not in missing
+
+
+@pytest.mark.unit
 def test_missing_pipeline_config_empty_when_fully_configured(configured_env):
+    configured_env.setenv("EMAIL_PROVIDER", "sendgrid")
     configured_env.setenv("OPENROUTER_API_KEY", "sk-or-test-key")
-    configured_env.setenv("EMAIL_API_KEY", "re_test_key")
+    configured_env.setenv("EMAIL_API_KEY", "sg_test_key")
+    configured_env.setenv("SENDER_EMAIL", "brief@example.com")
+    configured_env.setenv("RECIPIENT_EMAIL", "founder@example.com")
+    get_settings.cache_clear()
+
+    assert get_settings().missing_pipeline_config() == []
+
+
+@pytest.mark.unit
+def test_a_fully_configured_smtp_setup_reports_nothing_missing(configured_env):
+    configured_env.setenv("EMAIL_PROVIDER", "smtp")
+    configured_env.setenv("OPENROUTER_API_KEY", "sk-or-test-key")
+    configured_env.setenv("SMTP_USERNAME", "someone@gmail.com")
+    configured_env.setenv("SMTP_PASSWORD", "app-password")
     configured_env.setenv("SENDER_EMAIL", "brief@example.com")
     configured_env.setenv("RECIPIENT_EMAIL", "founder@example.com")
     get_settings.cache_clear()
