@@ -508,3 +508,157 @@ def test_the_api_key_never_appears_in_a_result():
     from app.mailer.sender import SendResult
 
     assert "key" not in SendResult(ok=False, error="HTTP 500: bad").error.replace("bad", "")
+
+
+# --- SendGrid adapter (PRD 6, 46, 61) ---------------------------------------
+
+SENDGRID_ENDPOINT = "https://api.sendgrid.com/v3/mail/send"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("Melbourne Mama <brief@example.org>", ("Melbourne Mama", "brief@example.org")),
+        ("<brief@example.org>", ("", "brief@example.org")),
+        ("brief@example.org", ("", "brief@example.org")),
+        ("  Spaced Name  < a@b.com >  ", ("Spaced Name", "a@b.com")),
+    ],
+)
+def test_display_names_are_split_for_sendgrid(value, expected):
+    """Resend takes one combined field; SendGrid rejects it and wants them apart.
+    Configuration should not have to know which provider is in use."""
+    from app.mailer.sender import split_address
+
+    assert split_address(value) == expected
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_sendgrid_accepts_a_202_as_success():
+    """SendGrid answers with 202 Accepted and an empty body, not 200."""
+    from app.mailer import SendGridSender
+
+    route = respx.post(SENDGRID_ENDPOINT).mock(
+        return_value=httpx.Response(202, headers={"X-Message-Id": "sg_abc123"})
+    )
+
+    async with build_mail_client() as client:
+        result = await SendGridSender("key", backoff_seconds=0).send(client, **SEND_ARGS)
+
+    assert result.ok is True
+    assert result.message_id == "sg_abc123"
+    assert route.call_count == 1
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_sendgrid_payload_has_plain_text_before_html():
+    """SendGrid builds the MIME parts in the order given, and the plain-text
+    alternative must come first or clients show the wrong one."""
+    import json
+
+    from app.mailer import SendGridSender
+
+    route = respx.post(SENDGRID_ENDPOINT).mock(return_value=httpx.Response(202))
+
+    async with build_mail_client() as client:
+        await SendGridSender("key", backoff_seconds=0).send(client, **SEND_ARGS)
+
+    body = json.loads(route.calls[0].request.content)
+    assert [part["type"] for part in body["content"]] == ["text/plain", "text/html"]
+    assert body["personalizations"][0]["to"][0]["email"] == "founder@example.com"
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_sendgrid_splits_the_display_name_into_its_own_field():
+    import json
+
+    from app.mailer import SendGridSender
+
+    route = respx.post(SENDGRID_ENDPOINT).mock(return_value=httpx.Response(202))
+    args = {**SEND_ARGS, "sender": "Melbourne Mama <brief@example.org>"}
+
+    async with build_mail_client() as client:
+        await SendGridSender("key", backoff_seconds=0).send(client, **args)
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["from"] == {"email": "brief@example.org", "name": "Melbourne Mama"}
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_sendgrid_unverified_sender_is_not_retried():
+    """An unverified single sender returns 403 and will do so every time."""
+    from app.mailer import SendGridSender
+
+    route = respx.post(SENDGRID_ENDPOINT).mock(
+        return_value=httpx.Response(403, json={"errors": [{"message": "sender not verified"}]})
+    )
+
+    async with build_mail_client() as client:
+        result = await SendGridSender("key", backoff_seconds=0).send(client, **SEND_ARGS)
+
+    assert result.ok is False
+    assert "not verified" in result.error
+    assert route.call_count == 1
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_sendgrid_transient_failure_is_retried_three_times():
+    from app.mailer import SendGridSender
+
+    route = respx.post(SENDGRID_ENDPOINT).mock(return_value=httpx.Response(503))
+
+    async with build_mail_client() as client:
+        result = await SendGridSender("key", backoff_seconds=0).send(client, **SEND_ARGS)
+
+    assert result.ok is False
+    assert route.call_count == 3
+
+
+@pytest.mark.integration
+@respx.mock
+async def test_sendgrid_200_is_not_mistaken_for_success():
+    """Only 202 means accepted. Treating any 2xx as success would report a delivery
+    that never happened."""
+    from app.mailer import SendGridSender
+
+    respx.post(SENDGRID_ENDPOINT).mock(return_value=httpx.Response(200, text="unexpected"))
+
+    async with build_mail_client() as client:
+        result = await SendGridSender("key", attempts=1, backoff_seconds=0).send(
+            client, **SEND_ARGS
+        )
+
+    assert result.ok is False
+
+
+@pytest.mark.unit
+def test_configuration_chooses_the_provider(configured_env):
+    """PRD 6: one provider per run, selected by config rather than by import."""
+    from app.config import get_settings
+    from app.deps import _build_sender
+    from app.mailer import ResendSender, SendGridSender
+
+    configured_env.setenv("EMAIL_API_KEY", "test-key")
+    for provider, expected in (("sendgrid", SendGridSender), ("resend", ResendSender)):
+        configured_env.setenv("EMAIL_PROVIDER", provider)
+        get_settings.cache_clear()
+        import logging
+
+        assert isinstance(_build_sender(get_settings(), logging.getLogger()), expected)
+
+
+@pytest.mark.unit
+def test_an_unknown_provider_is_rejected_at_startup(configured_env):
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    configured_env.setenv("EMAIL_PROVIDER", "mailchimp")
+
+    with pytest.raises(ValidationError):
+        Settings()

@@ -48,7 +48,7 @@ cp .env.example .env          # then fill it in
 ```
 
 ```bash
-.venv/Scripts/python.exe -m pytest        # 448 tests, no network, no API credits
+.venv/Scripts/python.exe -m pytest        # 460 tests, no network, no API credits
 .venv/Scripts/python.exe -m ruff check .
 ```
 
@@ -70,9 +70,10 @@ except a deliberate delivery.
 | `AGENT_SECRET` | **to boot** | Bearer token for the endpoint. Minimum 16 characters |
 | `OPENROUTER_API_KEY` | to run | |
 | `OPENROUTER_MODEL` | | Default `moonshotai/kimi-k2`. Never hard-coded |
-| `EMAIL_API_KEY` | to run | Resend |
-| `SENDER_EMAIL` | to run | Must be on a **Resend-verified domain** — see below |
-| `RECIPIENT_EMAIL` | to run | Unrestricted once a domain is verified |
+| `EMAIL_PROVIDER` | | `sendgrid` (default) or `resend` |
+| `EMAIL_API_KEY` | to run | For whichever provider is selected |
+| `SENDER_EMAIL` | to run | Must be a verified sender — see below. `Name <a@b.com>` is accepted |
+| `RECIPIENT_EMAIL` | to run | Unrestricted once the sender is verified |
 | `TIMEZONE` | | `Asia/Kolkata`. See Amendment A1 in PLAN.md |
 | `GLOBAL_TOP_N` / `NICHE_TOP_N` | | Default 5 |
 | `DATA_RETENTION_DAYS` | | Default 31 |
@@ -94,24 +95,40 @@ every variable marked `sync: false` in the dashboard — none of them are commit
 > Render's free tier sleeps after inactivity and takes ~50s to wake. The workflow warms
 > `/health` before requesting the briefing.
 
-### 2. Verify a sending domain
+### 2. Verify a sender
 
-**A Gmail or other free-provider address can never be the sender.** Resend requires
-DNS-verified domains, and nobody can add DNS records to `gmail.com`.
+No email provider will send from an address it cannot attribute to you. There are two
+ways to satisfy that, and they differ a lot in effort.
+
+**SendGrid — Single Sender Verification (default, no DNS).**
+
+1. Create a SendGrid account and go to **Settings → Sender Authentication → Verify a
+   Single Sender**.
+2. Enter the address you want the briefing to come *from*. SendGrid emails it a
+   confirmation link; click it.
+3. Create an API key under **Settings → API Keys** with **Mail Send** permission and
+   set it as `EMAIL_API_KEY`, with `EMAIL_PROVIDER=sendgrid`.
+4. Set `SENDER_EMAIL` to that verified address. The recipient is then unrestricted.
+
+This needs no DNS at all. The trade-off: a `from` address on a domain you do not
+control (a `gmail.com` address, say) is not DMARC-aligned, so it will sometimes land in
+spam. Acceptable for a briefing you send yourself, not for anything wider.
+
+**Resend — domain authentication (better deliverability, needs DNS).**
 
 1. Add a **subdomain** at [resend.com/domains](https://resend.com/domains), e.g.
    `updates.melbournemama.org`. Use a subdomain, not the root: the root already runs
    Google Workspace with its own SPF record, **a domain may only have one SPF record**,
    and a second one silently breaks SPF for all your normal mail.
 2. Publish the DKIM and SPF records Resend gives you, then click **Verify**.
-3. Set `SENDER_EMAIL` to an address on that subdomain.
+3. Set `EMAIL_PROVIDER=resend` and `SENDER_EMAIL` to an address on that subdomain.
 
 If your DNS host appends the root domain automatically, enter `resend._domainkey.updates`
 rather than the full name — a doubled record never verifies, and that is the first thing
 to check if verification stalls.
 
-Until this is done, sends return `403 domain is not verified`, which the sender treats
-as non-retryable.
+Either way, an unverified sender returns `403`, which is treated as non-retryable
+because it will fail identically every time.
 
 ### 3. GitHub Actions
 
@@ -171,7 +188,7 @@ END status=completed duration=114.9s
 
 | Symptom | Cause |
 |---|---|
-| `403 domain is not verified` | Step 2 above is incomplete |
+| `403 ... not verified` | Step 2 above is incomplete for whichever provider is selected |
 | `CONFIG_INVALID` (503) | A variable in the table above is missing |
 | `RUN_ALREADY_IN_PROGRESS` | Another run holds the lock. Stale locks clear after 15 min |
 | `already_completed` | Today's briefing was already delivered. Use `force=true` |

@@ -18,13 +18,21 @@ from app.collect.websearch import WebSearchCollector
 from app.config import Settings
 from app.errors import BriefingError, ErrorCode, Severity
 from app.logging_setup import LOGGER_NAME
-from app.mailer import ResendSender
+from app.mailer import ResendSender, SendGridSender
 from app.models import Section
 from app.pipeline import BriefingRunner, PipelineDeps
 from app.storage import LocalCsvBackend, Repository
 from app.storage.github_sync import GitHubSync
 
 DATA_DIR = Path("data")
+
+
+def _build_sender(settings: Settings, log: logging.Logger):
+    """One provider per run (PRD 6), chosen by configuration rather than by import."""
+    key = settings.email_api_key.get_secret_value()
+    if settings.email_provider == "resend":
+        return ResendSender(key, logger=log)
+    return SendGridSender(key, logger=log)
 
 
 def build_runner(
@@ -99,7 +107,7 @@ def build_runner(
         ),
         collection=CollectionService(collectors, logger=log),
         ai=AiService(ai_client, logger=log),
-        sender=ResendSender(settings.email_api_key.get_secret_value(), logger=log),
+        sender=_build_sender(settings, log),
         data_dir=data_dir,
     )
 

@@ -36,6 +36,10 @@ services:
         value: https://openrouter.ai/api/v1
 
       # --- Email (PRD 46) ---
+      # sendgrid needs no DNS: Single Sender Verification authorises one address by
+      # emailing it a confirmation link. resend needs a verified sending domain.
+      - key: EMAIL_PROVIDER
+        value: sendgrid
       - key: EMAIL_API_KEY
         sync: false
       - key: SENDER_EMAIL
