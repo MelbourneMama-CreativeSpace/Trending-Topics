@@ -26,6 +26,10 @@ MAX_CONCURRENT_RESEARCH = 3
 # PRD 41: the Creative Spark is optional. Below this the idea is not worth sending.
 MIN_SPARK_CONFIDENCE = 0.4
 
+# The Spark was marginal at 600: it fit on some runs and truncated on others, which
+# is the worst kind of limit because it looks like flakiness rather than a setting.
+SPARK_MAX_TOKENS = 900
+
 
 @dataclass
 class AiResult:
@@ -122,10 +126,16 @@ class AiService:
         prompt = build_spark_prompt([topic.headline for topic in topics])
 
         try:
-            raw = await self._ai.complete_json(http, SPARK_SYSTEM, prompt, max_tokens=600)
+            raw = await self._ai.complete_json(http, SPARK_SYSTEM, prompt, max_tokens=SPARK_MAX_TOKENS)
             spark = SparkIdea.model_validate(raw)
-        except (BriefingError, ValidationError) as exc:
-            self._log.warning("SPARK_FAILED error=%s", type(exc).__name__)
+        except BriefingError as exc:
+            # The code, not just the class name: "BriefingError" alone tells an
+            # operator nothing about whether this was a timeout, a rate limit or a
+            # malformed response.
+            self._log.warning("SPARK_FAILED code=%s detail=%s", exc.code, exc)
+            return None
+        except ValidationError as exc:
+            self._log.warning("SPARK_SCHEMA_INVALID errors=%d", exc.error_count())
             return None
 
         if spark.confidence < MIN_SPARK_CONFIDENCE:

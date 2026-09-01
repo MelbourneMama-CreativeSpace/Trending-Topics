@@ -159,12 +159,27 @@ class OpenRouterClient:
 
 
 def _extract_content(body: dict) -> str:
+    """Pull the message text, failing loudly if the response was cut short.
+
+    A truncated response is invalid JSON, so without this check it surfaces as
+    "malformed JSON" -- which sends you looking for a prompt or parsing bug when the
+    actual fix is a larger max_tokens. That misdiagnosis cost a debugging cycle.
+    """
     try:
-        return body["choices"][0]["message"]["content"] or ""
+        choice = body["choices"][0]
+        content = choice["message"]["content"] or ""
     except (KeyError, IndexError, TypeError) as exc:
         raise BriefingError(
             ErrorCode.AI_INVALID_RESPONSE, "response had no message content"
         ) from exc
+
+    if choice.get("finish_reason") == "length":
+        raise BriefingError(
+            ErrorCode.AI_INVALID_RESPONSE,
+            f"response truncated at max_tokens after {len(content)} characters",
+        )
+
+    return content
 
 
 def build_ai_client(timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> httpx.AsyncClient:

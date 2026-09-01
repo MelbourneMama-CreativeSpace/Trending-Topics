@@ -9,6 +9,7 @@ PRD 31 requires that we never invent a replacement.
 """
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 
 import httpx
@@ -41,6 +42,7 @@ class ResearchedTopic:
     confidence: float
     sources: list[BriefSource]
     creative_angle: str | None = None
+    category: str = ""
     key_facts: list[str] = field(default_factory=list)
     uncertainties: list[str] = field(default_factory=list)
     conflict_detected: bool = False
@@ -100,6 +102,14 @@ async def research_topic(
     return None
 
 
+def _dominant_category(ranked: RankedTopic) -> str:
+    """Most common desk among the cluster's articles, for the card chip (PRD 43)."""
+    categories = [a.category for a in ranked.cluster.articles if a.category]
+    if not categories:
+        return ""
+    return Counter(categories).most_common(1)[0][0]
+
+
 def _assemble(
     brief: TopicBrief,
     ranked: RankedTopic,
@@ -121,6 +131,7 @@ def _assemble(
         uncertainties=scrubbed.uncertainties,
         conflict_detected=scrubbed.conflict_detected,
         confidence=scrubbed.confidence,
+        category=_dominant_category(ranked),
         trend_score=ranked.trend_score,
         sources=select_sources(sources, scrubbed.source_indices),
     )

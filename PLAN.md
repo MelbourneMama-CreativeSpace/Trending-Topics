@@ -238,7 +238,7 @@ the run · injection attempt provably ineffective — **met**. Live run: 10/10 t
 
 ---
 
-## Phase 7 — Email rendering & sending
+## Phase 7 — Email rendering & sending ✅
 
 **Goal:** a premium, safe, client-compatible email.
 
@@ -253,7 +253,20 @@ subject line correct · header date renders in IST · send retries 3× then repo
 mocked Resend, no real send
 
 **Exit criteria:** no unescaped model output in HTML · partial state renders honestly ·
-renders correctly in a desktop and mobile client
+renders correctly in a desktop and mobile client — **met** for the first two, verified by rendering
+a live briefing: 0 script tags, 0 images, escaping tests confirmed to fail when autoescape is
+disabled, and a real 4-of-5 day rendered its shortfall note rather than padding. Client rendering
+is confirmed at Phase 9 with a real send.
+
+> **Sender constraint.** Resend requires DNS-verified domains, so a Gmail address can never be a
+> sender. `SENDER_EMAIL=collabs@melbournemama.org`; **`melbournemama.org` must be verified at
+> resend.com/domains** before a real send works — until then Resend returns 403, which the sender
+> correctly treats as non-retryable. The recipient is unconstrained.
+
+> **Google News links are not resolved.** Their `news.google.com/rss/articles/CBMi...` URLs return
+> HTTP 200 with a *JavaScript* redirect, not a 3xx, so server-side resolution would mean scraping
+> JS. The links work in a browser and each card shows the real publisher name, so this is left
+> alone rather than made fragile.
 
 ---
 
@@ -312,6 +325,6 @@ links, CSVs persist across a redeploy, schedule verified in IST.
 | 4 — Dedup & clustering | ✅ complete |
 | 5 — Ranking | ✅ complete |
 | 6 — AI layer | ✅ complete |
-| 7 — Email | next |
-| 8 — Orchestration | not started |
+| 7 — Email | ✅ complete |
+| 8 — Orchestration | next |
 | 9 — Deployment | not started |

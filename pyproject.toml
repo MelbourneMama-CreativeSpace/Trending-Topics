@@ -27,4 +27,5 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S105", "S106"]  # hardcoded test secrets are fine
+"tests/*" = ["S105", "S106"]              # hardcoded test secrets are fine
+"app/mailer/template.py" = ["E501"]       # HTML markup, not code; wrapping it hurts readability

@@ -34,8 +34,8 @@ accurately and without embellishment.
 
 Return a single JSON object with exactly these keys:
   headline         - one clear sentence naming the story, at most 20 words
-  what_happened    - 2-3 sentences of plain factual summary
-  why_trending     - 1-2 sentences on why this is being widely reported now
+  what_happened    - 3-4 sentences of plain factual summary
+  why_trending     - 2 sentences on why this is being widely reported now
   why_it_matters   - 1-2 sentences on the broader significance
   key_facts        - up to 6 short factual strings drawn from the headlines
   uncertainties    - up to 4 strings; anything the sources disagree on or leave unclear
@@ -54,8 +54,8 @@ Melbourne creative scene, with an interest in AI in creative production.
 
 Return a single JSON object with exactly these keys:
   headline         - one clear sentence naming the story, at most 20 words
-  what_happened    - 2-3 sentences of plain factual summary
-  why_trending     - 1-2 sentences on why this is being reported now
+  what_happened    - 3-4 sentences of plain factual summary
+  why_trending     - 2 sentences on why this is being reported now
   why_it_matters   - 1-2 sentences on why it matters to this founder specifically.
                      Be honest: if the connection is weak, say so plainly rather than
                      inventing relevance.
