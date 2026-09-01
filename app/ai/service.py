@@ -126,7 +126,9 @@ class AiService:
         prompt = build_spark_prompt([topic.headline for topic in topics])
 
         try:
-            raw = await self._ai.complete_json(http, SPARK_SYSTEM, prompt, max_tokens=SPARK_MAX_TOKENS)
+            raw = await self._ai.complete_json(
+                http, SPARK_SYSTEM, prompt, max_tokens=SPARK_MAX_TOKENS
+            )
             spark = SparkIdea.model_validate(raw)
         except BriefingError as exc:
             # The code, not just the class name: "BriefingError" alone tells an
