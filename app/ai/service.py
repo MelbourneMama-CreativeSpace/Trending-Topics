@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import httpx
 from pydantic import ValidationError
 
+from app.ai.brand_briefing import research_brand_topic
 from app.ai.briefing import ResearchedTopic, research_topic
 from app.ai.client import OpenRouterClient
 from app.ai.prompts import SPARK_SYSTEM, build_spark_prompt
@@ -19,6 +20,7 @@ from app.ai.schemas import SparkIdea
 from app.errors import BriefingError, ErrorCode, Severity
 from app.logging_setup import LOGGER_NAME
 from app.models import Section
+from app.rank.brand_ranker import BrandSelection
 from app.rank.context import RankedTopic
 
 MAX_CONCURRENT_RESEARCH = 3
@@ -111,6 +113,48 @@ class AiService:
     ) -> ResearchedTopic | None:
         async with self._semaphore:
             return await research_topic(http, self._ai, ranked, section, self._log)
+
+    async def research_brand_radar(
+        self, http: httpx.AsyncClient, selections: list[BrandSelection]
+    ) -> list[tuple[str, list[ResearchedTopic]]]:
+        """Research every brand's shortlist, concurrently and bounded.
+
+        A brand whose entries all fail comes back with an empty list rather than being
+        dropped, so the email can say the day had nothing for that lane instead of
+        silently omitting it (PRD 30, 31).
+        """
+        jobs = [
+            (selection.brand, ranked)
+            for selection in selections
+            for ranked in selection.topics
+        ]
+        if not jobs:
+            return [(selection.brand.key, []) for selection in selections]
+
+        outcomes = await asyncio.gather(
+            *(self._one_brand(http, ranked, brand) for brand, ranked in jobs)
+        )
+
+        by_brand: dict[str, list[ResearchedTopic]] = {
+            selection.brand.key: [] for selection in selections
+        }
+        for researched, (brand, _ranked) in zip(outcomes, jobs, strict=True):
+            if researched is not None:
+                by_brand[brand.key].append(researched)
+
+        succeeded = sum(len(topics) for topics in by_brand.values())
+        self._log.info(
+            "BRAND_RADAR_COMPLETED attempted=%d succeeded=%d brands_with_content=%d",
+            len(jobs), succeeded, sum(1 for t in by_brand.values() if t),
+        )
+
+        return [(selection.brand.key, by_brand[selection.brand.key]) for selection in selections]
+
+    async def _one_brand(
+        self, http: httpx.AsyncClient, ranked: RankedTopic, brand
+    ) -> ResearchedTopic | None:
+        async with self._semaphore:
+            return await research_brand_topic(http, self._ai, ranked, brand, self._log)
 
     async def creative_spark(
         self, http: httpx.AsyncClient, topics: list[ResearchedTopic]

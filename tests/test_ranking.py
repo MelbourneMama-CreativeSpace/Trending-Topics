@@ -170,11 +170,13 @@ def test_global_ranker_does_not_import_the_founder_profile():
     """PRD 17, enforced structurally rather than by convention.
 
     Checks the whole import path the global ranker depends on, not just its own file,
-    so the profile cannot arrive through a helper module either.
+    so neither the profile nor the brand registry can arrive through a helper module.
     """
     for filename in GLOBAL_PATH_MODULES:
         imported = _imported_modules(RANK_DIR / filename)
-        offending = {name for name in imported if "profile" in name}
+        offending = {
+            name for name in imported if "profile" in name or "brands" in name
+        }
         assert not offending, f"{filename} imports {offending}; global ranking must be blind"
 
 
@@ -621,3 +623,160 @@ def test_global_selection_is_not_gated_on_relevance():
     clusters = [cluster(f"Central bank story {i}", list(WIRES)) for i in range(5)]
 
     assert len(select_global_top(clusters, context(), top_n=5)) == 5
+
+
+# --- Brand Radar (Phase 10) --------------------------------------------------
+
+
+def brand_cluster(headline, section=Section.NICHE, category=""):
+    articles = [
+        Article(
+            id=f"{headline[:6]}{outlet}", title=headline, url=f"https://{outlet}/x",
+            source=outlet, source_domain=outlet,
+            published_at=NOW - dt.timedelta(hours=2), collected_at=NOW,
+            content_hash=headline[:8], category=category,
+        )
+        for outlet in ("wire.com", "paper.com")
+    ]
+    return Cluster(topic_id=headline[:14], headline=headline, section=section,
+                   articles=articles)
+
+
+@pytest.mark.unit
+def test_each_story_lands_in_the_brand_that_covers_it():
+    from app.rank import select_brand_radar
+
+    clusters = [
+        brand_cluster("Samsung launches Galaxy smartphone with new camera"),
+        brand_cluster("Melbourne Indian restaurant wins a food award"),
+        brand_cluster("Australia tightens international student visa rules"),
+        brand_cluster("YouTube changes creator monetisation payouts"),
+    ]
+
+    placed = {
+        selection.brand.key: [t.headline for t in selection.topics]
+        for selection in select_brand_radar(clusters, context(), per_brand=2)
+    }
+
+    assert any("Samsung" in h for h in placed["the_tech_gun"])
+    assert any("restaurant" in h for h in placed["eat_post_share"])
+    assert any("student visa" in h for h in placed["melbourne_mama"])
+    assert any("monetisation" in h for h in placed["mama_matters"])
+
+
+@pytest.mark.unit
+def test_a_story_is_never_shown_under_two_brands():
+    """Cricket reads as relevant to more than one lane. Without global assignment the
+    reader sees the same item twice in one email."""
+    from app.rank import select_brand_radar
+
+    clusters = [brand_cluster("India beats Australia in the cricket series decider")]
+
+    selections = select_brand_radar(clusters, context(), per_brand=2)
+    appearances = sum(len(selection.topics) for selection in selections)
+
+    assert appearances == 1
+
+
+@pytest.mark.unit
+def test_provenance_counts_as_relevance_on_its_own():
+    """An article only exists because a brand's own query went looking for it. That is
+    evidence even when the headline shares no wording with the brand's terms."""
+    from app.brands import BRANDS_BY_KEY
+    from app.rank import brand_relevance_score
+
+    tagged = brand_cluster("Shipping container logistics quarterly report",
+                           category="brand:the_cheguri")
+    untagged = brand_cluster("Shipping container logistics quarterly report")
+    brand = BRANDS_BY_KEY["the_cheguri"]
+
+    assert brand_relevance_score(tagged, brand) > 0
+    assert brand_relevance_score(untagged, brand) == 0
+
+
+@pytest.mark.unit
+def test_a_brand_with_nothing_returns_an_empty_block_not_a_missing_one():
+    """PRD 62 in brand form: say the lane was quiet rather than omitting it."""
+    from app.brands import BRANDS
+    from app.rank import select_brand_radar
+
+    clusters = [brand_cluster("Samsung launches Galaxy smartphone with new camera")]
+
+    selections = select_brand_radar(clusters, context(), per_brand=2)
+
+    assert len(selections) == len(BRANDS)
+    assert any(selection.is_empty for selection in selections)
+
+
+@pytest.mark.unit
+def test_brand_selection_is_reproducible():
+    from app.rank import select_brand_radar
+
+    clusters = [
+        brand_cluster("Samsung launches Galaxy smartphone with new camera"),
+        brand_cluster("Melbourne Indian restaurant wins a food award"),
+        brand_cluster("YouTube changes creator monetisation payouts"),
+    ]
+
+    first = select_brand_radar(clusters, context(), per_brand=2)
+    second = select_brand_radar(list(reversed(clusters)), context(), per_brand=2)
+
+    assert [
+        (s.brand.key, [t.topic_id for t in s.topics]) for s in first
+    ] == [(s.brand.key, [t.topic_id for t in s.topics]) for s in second]
+
+
+@pytest.mark.unit
+def test_per_brand_cap_is_respected():
+    from app.rank import select_brand_radar
+
+    clusters = [
+        brand_cluster(f"Samsung launches Galaxy smartphone model {i} camera")
+        for i in range(6)
+    ]
+
+    selections = select_brand_radar(clusters, context(), per_brand=2)
+
+    assert all(len(selection.topics) <= 2 for selection in selections)
+
+
+@pytest.mark.unit
+def test_an_unrelated_story_reaches_no_brand():
+    from app.rank import select_brand_radar
+
+    clusters = [brand_cluster("Regulator approves an industrial zoning amendment")]
+
+    selections = select_brand_radar(clusters, context(), per_brand=2)
+
+    assert all(selection.is_empty for selection in selections)
+
+
+@pytest.mark.unit
+def test_provenance_alone_cannot_outrank_a_real_wording_match():
+    """Regression from a live run: a Google News query for "food festival Australia"
+    returned a story about a *film* festival, which scored full relevance for Eat Post
+    Share on provenance alone. Search results are looser than the query implies."""
+    from app.brands import BRANDS_BY_KEY
+    from app.rank import brand_relevance_score
+
+    brand = BRANDS_BY_KEY["eat_post_share"]
+    off_target = brand_cluster("Fall Festival Movies Sold So Far at the market",
+                               category="brand:eat_post_share")
+    on_target = brand_cluster("Top food and beverage trends for restaurants in 2026")
+
+    assert brand_relevance_score(on_target, brand) > brand_relevance_score(off_target, brand)
+
+
+@pytest.mark.unit
+def test_provenance_still_beats_an_empty_lane():
+    """Capped, not discarded: on a quiet day a story the brand's own query found is
+    better than showing nothing."""
+    from app.brands import BRANDS_BY_KEY
+    from app.rank import brand_relevance_score
+    from app.rank.brand_ranker import MIN_RELEVANCE_FOR_SELECTION
+
+    brand = BRANDS_BY_KEY["the_cheguri"]
+    found = brand_cluster("Shipping container logistics report",
+                          category="brand:the_cheguri")
+
+    assert brand_relevance_score(found, brand) >= MIN_RELEVANCE_FOR_SELECTION

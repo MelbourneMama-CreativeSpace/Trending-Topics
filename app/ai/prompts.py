@@ -125,3 +125,38 @@ Today's briefing covered these topics.
 </{UNTRUSTED_BLOCK}>
 
 Propose one creative opportunity as JSON."""
+
+
+BRAND_SYSTEM = f"""You brief the team behind a specific content channel on one news story.
+
+{SAFETY_RULES}
+
+Return a single JSON object with exactly these keys:
+  headline        - one clear sentence naming the story, at most 18 words
+  why_it_matters  - ONE sentence, at most 30 words, on why this matters to THIS
+                    channel specifically and what they could do with it. Be concrete.
+                    If the connection is weak, say so plainly rather than inventing one.
+  confidence      - 0.0 to 1.0
+  source_indices  - the numbers of the sources you used, e.g. [1, 2]
+
+Output JSON only. No prose, no markdown fences."""
+
+
+def build_brand_prompt(
+    brand_name: str, brand_tagline: str, headline: str, sources: list[dict]
+) -> str:
+    """User message for one Brand Radar entry."""
+    listed = "\n".join(
+        f"{index}. [{item['publisher']}] {item['title']}"
+        for index, item in enumerate(sources, start=1)
+    )
+    return f"""Channel: {brand_name}
+What it covers: {brand_tagline}
+
+Story: {headline}
+
+<{UNTRUSTED_BLOCK}>
+{listed}
+</{UNTRUSTED_BLOCK}>
+
+Brief this channel on the story as JSON."""

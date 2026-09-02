@@ -43,6 +43,8 @@ class ResearchedTopic:
     sources: list[BriefSource]
     creative_angle: str | None = None
     category: str = ""
+    brand_key: str = ""
+    brand_name: str = ""
     key_facts: list[str] = field(default_factory=list)
     uncertainties: list[str] = field(default_factory=list)
     conflict_detected: bool = False

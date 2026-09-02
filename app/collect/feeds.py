@@ -11,11 +11,8 @@ two wire services must outrank ten content farms carrying the same syndicated co
 
 from dataclasses import dataclass
 
-from app.collect.queries import (
-    ENGLISH_NICHE_QUERIES,
-    TELUGU_NICHE_QUERIES,
-    google_news_search_url,
-)
+from app.brands import BRANDS, all_queries
+from app.collect.queries import google_news_search_url
 from app.models import SourceType
 
 # Reliability bands. Judgement calls, revisable from observed behaviour in sources.csv.
@@ -228,31 +225,37 @@ def reliability_for(source_type: SourceType) -> float:
 
 
 def niche_search_feeds() -> tuple[FeedSpec, ...]:
-    """Keyword search as RSS, so the niche engine works with zero API keys (PRD 21).
+    """Keyword search as RSS, one set of queries per brand, so the niche engine works
+    with zero API keys (PRD 21).
 
-    Fixed feeds cover trade press well but barely touch Telugu-language reporting.
-    These queries are how the Creative Radar reaches Telugu outlets at all.
+    Driven by the brand registry rather than a fixed list. A brand whose queries are
+    never collected can never be ranked, so the two have to stay in step -- deriving
+    the feeds from the same source that drives ranking is what keeps them there.
+
+    The category carries the brand key. That is how a collected article is later traced
+    back to the brand that asked for it, which gives ranking a much stronger signal
+    than headline matching alone.
     """
-    english = tuple(
+    return tuple(
         FeedSpec(
-            google_news_search_url(query, "en"),
-            f"Google News: {query}",
+            google_news_search_url(query, language),
+            f"{brand.name}: {query}",
             SourceType.SEARCH,
-            "niche search",
+            f"brand:{brand.key}",
             AGGREGATOR,
-            "en",
+            language,
         )
-        for query in ENGLISH_NICHE_QUERIES
-    )
-    telugu = tuple(
-        FeedSpec(
-            google_news_search_url(query, "te"),
-            f"Google News: {query}",
-            SourceType.SEARCH,
-            "niche search",
-            AGGREGATOR,
-            "te",
+        for brand in BRANDS
+        for query, language in (
+            [(q, "en") for q in brand.queries] + [(q, "te") for q in brand.telugu_queries]
         )
-        for query in TELUGU_NICHE_QUERIES
     )
-    return english + telugu
+
+
+def brand_key_from_category(category: str) -> str:
+    """Recover the brand key a feed was collected for, or "" if it was not."""
+    return category[6:] if category.startswith("brand:") else ""
+
+
+def total_brand_queries() -> int:
+    return len(all_queries())

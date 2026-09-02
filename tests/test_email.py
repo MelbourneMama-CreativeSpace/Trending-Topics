@@ -53,6 +53,7 @@ def topic(index=1, section="global", **overrides):
 
 def briefing(global_count=5, niche_count=5, spark=None, **overrides):
     defaults = {
+        "brand_blocks": [],
         "briefing_date": TODAY,
         "timezone": "Asia/Kolkata",
         "global_topics": [topic(i, "global") for i in range(1, global_count + 1)],
@@ -61,6 +62,23 @@ def briefing(global_count=5, niche_count=5, spark=None, **overrides):
         "generated_at": GENERATED,
     }
     return Briefing(**{**defaults, **overrides})
+
+
+def blocks(count=3, topics_each=1):
+    """Brand blocks, some populated and some deliberately empty."""
+    from app.brands import BRANDS
+    from app.mailer import BrandBlock
+
+    out = []
+    for index, brand in enumerate(BRANDS[:count]):
+        entries = [
+            topic(index * 10 + n, "niche", headline=f"{brand.name} story {n}",
+                  why_it_matters="One line on why this matters.", creative_angle=None)
+            for n in range(topics_each if index % 2 == 0 else 0)
+        ]
+        out.append(BrandBlock(key=brand.key, name=brand.name, tagline=brand.tagline,
+                              icon=brand.icon, topics=entries))
+    return out
 
 
 SPARK = SparkIdea(
@@ -93,10 +111,10 @@ def test_header_renders_the_date_in_ist():
 
 @pytest.mark.unit
 def test_full_briefing_renders_both_sections_and_every_card():
-    html = render_html(briefing(5, 5, SPARK))
+    html = render_html(briefing(5, 0, SPARK, brand_blocks=blocks()))
 
     assert "Global Pulse" in html
-    assert "Creative Radar" in html
+    assert "Brand Radar" in html
     assert "Creative Spark" in html
     for index in range(1, 6):
         assert f"Headline number {index}" in html
@@ -121,21 +139,33 @@ def test_every_card_carries_the_three_required_blocks():
 
 
 @pytest.mark.unit
-def test_creative_angle_appears_only_in_the_niche_section():
-    """PRD 43: the creative angle is what distinguishes a niche card."""
-    global_only = render_html(briefing(1, 0))
-    with_niche = render_html(briefing(0, 1))
+def test_every_brand_appears_even_with_nothing_to_report():
+    """A quiet lane is information. Dropping the block would leave the reader unable
+    to tell 'nothing happened' from 'the pipeline broke'."""
+    populated = blocks(count=4, topics_each=1)
+    html = render_html(briefing(1, 0, brand_blocks=populated))
 
-    assert "Creative angle" not in global_only
-    assert "Creative angle" in with_niche
+    for block in populated:
+        assert block.name in html
+    assert "Nothing matched this lane today" in html
+
+
+@pytest.mark.unit
+def test_brand_cards_are_compact():
+    """Brand entries are a headline and one line, not the four-field global card.
+    Ten brands at full length would triple the email."""
+    html = render_html(briefing(0, 0, brand_blocks=blocks(count=2, topics_each=1)))
+
+    assert "What happened" not in html
+    assert "Why it is trending" not in html
 
 
 @pytest.mark.unit
 def test_ai_suggestions_are_labelled_as_suggestions():
     """PRD 40: generated ideas must be distinguishable from factual reporting."""
-    html = render_html(briefing(0, 1, SPARK))
+    html = render_html(briefing(1, 0, SPARK, brand_blocks=blocks()))
 
-    assert html.count("not reporting") >= 2
+    assert "not reporting" in html
 
 
 @pytest.mark.unit
@@ -167,12 +197,11 @@ def test_conflicting_sources_are_surfaced_to_the_reader():
 
 
 @pytest.mark.unit
-def test_partial_niche_section_says_so_plainly():
-    """PRD 62: display that only four were available. Never invent a fifth."""
-    html = render_html(briefing(5, 4))
+def test_a_briefing_with_mostly_empty_lanes_is_partial():
+    """PRD 62: a thin day is reported as thin rather than padded."""
+    quiet = briefing(5, 0, brand_blocks=blocks(count=6, topics_each=0))
 
-    assert "4 verified creative trends were available today" in html
-    assert "Nothing has been invented" in html
+    assert quiet.is_partial is True
 
 
 @pytest.mark.unit
