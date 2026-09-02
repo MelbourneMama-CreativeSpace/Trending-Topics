@@ -29,11 +29,12 @@ HEADLINES = [
     "Election commission announces the national polling timetable",
     "Merger between two energy firms clears regulatory review",
     "Ferry service suspended after a safety inspection failure",
-    "Telugu short film selected for a major international festival",
-    "Melbourne film festival announces its programme for the year",
-    "Creator economy expands beyond metropolitan cities",
-    "Podcast industry revenue grows for a fourth straight year",
-    "Filmmaking collective launches a short film fund",
+    # Written to match distinct brand lanes, so brand assignment has real work to do.
+    "Samsung launches a new smartphone with an upgraded camera",
+    "Australia tightens international student visa rules",
+    "YouTube changes creator monetisation and ad revenue splits",
+    "Melbourne Indian restaurant wins a major food award",
+    "India beats Australia in the cricket series decider",
 ]
 
 
@@ -104,20 +105,46 @@ def researched(index, section):
 
 
 class FakeAi:
-    def __init__(self, global_count=5, niche_count=5, spark=True, raise_error=None):
+    def __init__(self, global_count=5, niche_count=5, spark=True, raise_error=None,
+                 per_brand=2):
         self.global_count = global_count
         self.niche_count = niche_count
         self.spark = spark
         self.raise_error = raise_error
+        self.per_brand = per_brand
 
     async def research_all(self, http, global_topics, niche_topics):
+        """Honours the lists it is given.
+
+        Returning a fixed count regardless of input let this fake manufacture topics
+        the pipeline never asked for, which masked a threshold test entirely.
+        """
         if self.raise_error:
             raise self.raise_error
         return AiResult(
-            global_topics=[researched(i, Section.GLOBAL) for i in range(self.global_count)],
-            niche_topics=[researched(i + 100, Section.NICHE) for i in range(self.niche_count)],
+            global_topics=[
+                researched(i, Section.GLOBAL)
+                for i in range(min(len(global_topics), self.global_count))
+            ],
+            niche_topics=[
+                researched(i + 100, Section.NICHE)
+                for i in range(min(len(niche_topics), self.niche_count))
+            ],
             attempted=len(global_topics) + len(niche_topics),
         )
+
+    async def research_brand_radar(self, http, selections):
+        """Mirrors the real signature: one entry per brand, empty lanes preserved."""
+        if self.raise_error:
+            raise self.raise_error
+        out = []
+        for selection in selections:
+            topics = [
+                researched(f"{selection.brand.key}-{i}", Section.NICHE)
+                for i in range(min(len(selection.topics), self.per_brand))
+            ]
+            out.append((selection.brand.key, topics))
+        return out
 
     async def creative_spark(self, http, topics):
         if not self.spark:
@@ -300,7 +327,7 @@ async def test_force_overrides_duplicate_protection(build):
 async def test_too_few_topics_refuses_rather_than_padding(build):
     """PRD 31: three verified topics beat five invented ones, and below three there
     is no briefing worth sending."""
-    runner, deps = build(ai=FakeAi(global_count=1, niche_count=1))
+    runner, deps = build(ai=FakeAi(global_count=1, per_brand=0))
 
     outcome = await runner.run()
 
@@ -311,21 +338,44 @@ async def test_too_few_topics_refuses_rather_than_padding(build):
 
 @pytest.mark.integration
 async def test_a_thin_but_viable_day_is_sent_as_partial(build):
-    """PRD 62: four verified niche stories is a valid send."""
-    runner, deps = build(ai=FakeAi(global_count=5, niche_count=4))
+    """PRD 62: a short day still ships, and says so rather than padding."""
+    runner, deps = build(ai=FakeAi(global_count=3, per_brand=1))
 
     outcome = await runner.run()
 
     assert outcome.success is True
     assert outcome.status == "partial"
-    assert outcome.niche_topics == 4
+    assert outcome.global_topics == 3
     assert len(deps.sender.sends) == 1
-    assert "4 verified creative trends" in deps.sender.sends[0]["html"]
+
+
+@pytest.mark.integration
+async def test_empty_brand_lanes_are_shown_not_hidden(build):
+    """A brand with nothing today is information, not a fault. Silently dropping the
+    block would leave the reader unable to tell 'quiet' from 'broken'."""
+    runner, deps = build(ai=FakeAi(per_brand=0))
+
+    await runner.run()
+
+    html = deps.sender.sends[0]["html"]
+    assert "Nothing matched this lane today" in html
+    for brand in deps.brands:
+        assert brand.name in html, f"{brand.name} must appear even when empty"
+
+
+@pytest.mark.integration
+async def test_quiet_lanes_are_named_in_the_warnings(build):
+    """Which lanes were quiet is the useful part, so they are named rather than counted."""
+    runner, _ = build(ai=FakeAi(per_brand=0))
+
+    outcome = await runner.run()
+
+    assert any("no stories matched" in warning for warning in outcome.warnings)
 
 
 @pytest.mark.integration
 async def test_a_partial_run_is_recorded_as_partial(build, pipeline_settings):
-    runner, deps = build(ai=FakeAi(global_count=5, niche_count=3))
+    runner, deps = build(ai=FakeAi(global_count=3, per_brand=1))
 
     await runner.run()
 

@@ -351,3 +351,44 @@ and are blocked on two things only the founder can do:
 | 7 — Email | ✅ complete |
 | 8 — Orchestration | ✅ complete |
 | 9 — Deployment | ✅ built, live verification pending |
+
+
+---
+
+## Phase 10 — Brand Radar ✅
+
+**Goal:** replace the single Creative Radar list with one block per brand.
+
+Creative Radar scored everything against one set of founder interests. The studio is
+ten pages with ten lanes, and a smartphone launch that matters to The Tech Gun is noise
+to Eat Post Share. Each brand now carries its own interest terms and its own search
+queries, and gets its own block.
+
+Deliverables: `app/brands.py` (ten brands, English + Telugu terms, 41 queries) ·
+`app/rank/brand_ranker.py` (per-brand scoring, global assignment) ·
+`app/ai/brand_briefing.py` (compact brief) · brand blocks in the email
+
+**Design notes**
+
+- **Brands live at the top level, not under `app/rank`.** Collection needs the queries
+  and ranking needs the interests; putting them under `rank` would force `collect` to
+  import from `rank` and invert the layering.
+- **Collection is driven by the same registry as ranking.** A brand whose queries are
+  never collected can never be ranked, so the two must stay in step.
+- **Feeds tag articles with the brand key that asked for them**, so provenance is
+  available to ranking as evidence alongside wording.
+- **A story belongs to one brand.** Assignment is global and greedy; without it a
+  cricket story appears under two brands and the reader sees it twice.
+- **Brand cards are compact** — headline, one line, sources. Ten brands at the full
+  four-field treatment would roughly triple both the email and the per-run cost.
+
+> **Found on live data:** provenance was initially treated as conclusive, and it is not.
+> A Google News query for "food festival Australia" returned a story about a *film*
+> festival, which then scored full relevance for Eat Post Share despite sharing no
+> wording with the brand. Search results are looser than the query implies. Provenance
+> alone is now capped below a genuine wording match, so it still beats an empty lane on
+> a quiet day but never displaces a real match.
+
+**Verified live:** 10 of 10 brands received content from real news, 20 brand stories,
+with Pixel Drop and a Philips 5G launch to The Tech Gun, the YouTube algorithm and an
+ISB creator study to MAMA Matters, and a Telugu travel vlogger to The Cheguri.

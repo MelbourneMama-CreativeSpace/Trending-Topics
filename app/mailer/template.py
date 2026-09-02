@@ -91,21 +91,48 @@ HTML_TEMPLATE = """\
   {{ card(topic, loop.index, false) }}
   {% endfor %}
 
-  {# ---------------- CREATIVE RADAR ---------------- #}
+  {# ---------------- BRAND RADAR ---------------- #}
   <tr><td style="padding:10px 24px 0 24px;"><div style="height:1px;background:{{ rule }};"></div></td></tr>
   <tr><td class="pad" style="padding:18px 24px 4px 24px;font-family:Helvetica,Arial,sans-serif;">
-    <div style="font-size:17px;font-weight:bold;color:{{ ink }};">🎬 Creative Radar</div>
+    <div style="font-size:17px;font-weight:bold;color:{{ ink }};">🎬 Brand Radar</div>
     <div style="font-size:13px;color:{{ muted }};margin-top:5px;line-height:1.5;">
       {{ niche_intro }}</div>
-    {% if niche_shortfall %}
-    <div style="font-size:12px;color:{{ accent }};margin-top:10px;padding:9px 12px;
-                background:#fbf3f0;border-left:3px solid {{ accent }};line-height:1.5;">
-      {{ niche_shortfall }}</div>
-    {% endif %}
   </td></tr>
 
-  {% for topic in niche_topics %}
-  {{ card(topic, loop.index, true) }}
+  {% for block in brand_blocks %}
+  <tr><td class="pad" style="padding:9px 24px 0 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+           style="background:{{ card_bg }};border:1px solid {{ rule }};border-radius:10px;">
+      <tr><td style="padding:13px 16px;font-family:Helvetica,Arial,sans-serif;">
+
+        <div style="font-size:13px;font-weight:bold;color:{{ ink }};">
+          {{ block.icon }}&nbsp; {{ block.name }}</div>
+        <div style="font-size:10.5px;color:{{ muted }};margin-top:2px;">{{ block.tagline }}</div>
+
+        {% if block.topics %}
+        {% for topic in block.topics %}
+        <div style="margin-top:11px;padding-top:10px;border-top:1px solid {{ rule }};">
+          <div style="font-family:Georgia,'Times New Roman',serif;font-size:14.5px;
+                      line-height:1.35;color:{{ ink }};">{{ topic.headline }}</div>
+          <div style="font-size:12.5px;line-height:1.5;color:{{ muted }};margin-top:5px;">
+            {{ topic.why_it_matters }}</div>
+          <div style="margin-top:6px;font-size:11.5px;line-height:1.7;">
+            {% for source in topic.sources %}
+            <a href="{{ source.url }}" style="color:{{ accent }};text-decoration:none;">
+              {{ source.publisher }}</a>{% if not loop.last %}<span
+              style="color:{{ rule }};">&nbsp;&middot;&nbsp;</span>{% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="margin-top:9px;font-size:12px;color:{{ muted }};font-style:italic;">
+          Nothing matched this lane today.</div>
+        {% endif %}
+
+      </td></tr>
+    </table>
+  </td></tr>
   {% endfor %}
 
   {# ---------------- CREATIVE SPARK ---------------- #}
@@ -137,8 +164,8 @@ HTML_TEMPLATE = """\
     <div style="height:1px;background:{{ rule }};"></div>
     <div style="font-size:11px;color:{{ muted }};margin-top:14px;line-height:1.7;">
       Sources are linked with every story.<br>
-      {{ global_topics|length }} global and {{ niche_topics|length }} creative
-      {{ 'trend' if (global_topics|length + niche_topics|length) == 1 else 'trends' }}
+      {{ global_topics|length }} global stories and {{ brand_topic_count }} across
+      {{ brands_with_content }} of {{ brand_blocks|length }} brands,
       from {{ source_count }} sources.<br>
       Melbourne Mama Morning Intelligence &middot; generated {{ generated_line }}
     </div>

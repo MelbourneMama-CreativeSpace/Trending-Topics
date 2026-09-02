@@ -51,3 +51,20 @@ class SparkIdea(BaseModel):
     format: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+class BrandBrief(BaseModel):
+    """One Brand Radar entry (PRD 66).
+
+    Far smaller than `TopicBrief` on purpose. A brand block is a scannable line, not a
+    document, so the model is asked for a headline and a single sentence rather than
+    four paragraphs. Ten brands at full length would triple both the email and the
+    per-run cost.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    headline: str = Field(min_length=1, max_length=MAX_HEADLINE_LENGTH)
+    why_it_matters: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    source_indices: list[int] = Field(default_factory=list)

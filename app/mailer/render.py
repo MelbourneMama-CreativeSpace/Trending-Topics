@@ -31,9 +31,7 @@ from app.mailer.template import (
 DEFAULT_ICON = "📰"
 
 GLOBAL_INTRO = "The biggest stories worth knowing today, chosen without reference to your work."
-NICHE_INTRO = (
-    "Trends from Telugu cinema, filmmaking, podcasting and the Melbourne creative scene."
-)
+NICHE_INTRO = "What moved today in each of your lanes. Empty means nothing matched."
 
 _environment = Environment(
     autoescape=select_autoescape(default=True, default_for_string=True),
@@ -43,12 +41,24 @@ _environment = Environment(
 
 
 @dataclass
+class BrandBlock:
+    """One brand's entry in the Brand Radar. May legitimately be empty."""
+
+    key: str
+    name: str
+    tagline: str
+    icon: str
+    topics: list[ResearchedTopic] = field(default_factory=list)
+
+
+@dataclass
 class Briefing:
     """Everything the renderer needs. Assembled by the Phase 8 pipeline."""
 
     briefing_date: dt.date
     timezone: str
     global_topics: list[ResearchedTopic] = field(default_factory=list)
+    brand_blocks: list[BrandBlock] = field(default_factory=list)
     niche_topics: list[ResearchedTopic] = field(default_factory=list)
     spark: SparkIdea | None = None
     expected_global: int = 5
@@ -56,21 +66,30 @@ class Briefing:
     generated_at: dt.datetime | None = None
 
     @property
+    def brand_topics(self) -> list[ResearchedTopic]:
+        return [topic for block in self.brand_blocks for topic in block.topics]
+
+    @property
+    def brands_with_content(self) -> int:
+        return sum(1 for block in self.brand_blocks if block.topics)
+
+    @property
     def is_partial(self) -> bool:
-        return (
-            len(self.global_topics) < self.expected_global
-            or len(self.niche_topics) < self.expected_niche
-        )
+        """Partial when global is short, or when brands are mostly empty.
+
+        A brand with nothing today is normal and not a failure on its own; a morning
+        where most lanes are empty is a thin day worth flagging.
+        """
+        if len(self.global_topics) < self.expected_global:
+            return True
+        if not self.brand_blocks:
+            return len(self.niche_topics) < self.expected_niche
+        return self.brands_with_content < max(1, len(self.brand_blocks) // 2)
 
     @property
     def source_count(self) -> int:
-        return len(
-            {
-                source.url
-                for topic in (*self.global_topics, *self.niche_topics)
-                for source in topic.sources
-            }
-        )
+        every = (*self.global_topics, *self.niche_topics, *self.brand_topics)
+        return len({source.url for topic in every for source in topic.sources})
 
 
 def category_icon(category: str) -> str:
@@ -115,7 +134,8 @@ def _zone_abbreviation(zone: ZoneInfo, day: dt.date) -> str:
 def _preheader(briefing: Briefing) -> str:
     """Inbox preview text. Clients show it beside the subject."""
     lead = briefing.global_topics[0].headline if briefing.global_topics else ""
-    return f"{len(briefing.global_topics)} global + {len(briefing.niche_topics)} creative. {lead}"
+    brand_count = len(briefing.brand_topics) or len(briefing.niche_topics)
+    return f"{len(briefing.global_topics)} global + {brand_count} for your brands. {lead}"
 
 
 def _valid_sources_only(topics: list[ResearchedTopic]) -> list[ResearchedTopic]:
@@ -144,12 +164,19 @@ def render_html(briefing: Briefing) -> str:
         generated_line=generated.strftime("%H:%M %Z"),
         global_topics=_valid_sources_only(briefing.global_topics),
         niche_topics=_valid_sources_only(briefing.niche_topics),
+        brand_blocks=[
+            BrandBlock(
+                key=block.key, name=block.name, tagline=block.tagline, icon=block.icon,
+                topics=_valid_sources_only(block.topics),
+            )
+            for block in briefing.brand_blocks
+        ],
+        brand_topic_count=len(briefing.brand_topics),
+        brands_with_content=briefing.brands_with_content,
         spark=briefing.spark,
         global_intro=GLOBAL_INTRO,
         niche_intro=NICHE_INTRO,
-        niche_shortfall=shortfall_note(
-            len(briefing.niche_topics), briefing.expected_niche, "creative"
-        ),
+
         source_count=briefing.source_count,
         icon=category_icon,
         ink=INK,
@@ -199,10 +226,28 @@ def render_text(briefing: Briefing) -> str:
 
     section("GLOBAL PULSE", GLOBAL_INTRO, briefing.global_topics, niche=False)
 
-    shortfall = shortfall_note(len(briefing.niche_topics), briefing.expected_niche, "creative")
-    section("CREATIVE RADAR", NICHE_INTRO, briefing.niche_topics, niche=True)
-    if shortfall:
-        lines.extend([f"NOTE: {shortfall}", ""])
+    lines.extend(["BRAND RADAR", NICHE_INTRO, ""])
+    for block in briefing.brand_blocks:
+        lines.append(f"{block.name.upper()} -- {block.tagline}")
+        if not block.topics:
+            lines.extend(["    (nothing matched this lane today)", ""])
+            continue
+        for topic in block.topics:
+            lines.append(f"    {topic.headline}")
+            lines.append(f"      {topic.why_it_matters}")
+            for source in topic.sources:
+                if is_valid_url(source.url):
+                    lines.append(f"      - {source.publisher}: {source.url}")
+            lines.append("")
+
+    # Legacy single-list niche section, kept for briefings built before brand blocks.
+    if briefing.niche_topics:
+        section("CREATIVE RADAR", NICHE_INTRO, briefing.niche_topics, niche=True)
+        shortfall = shortfall_note(
+            len(briefing.niche_topics), briefing.expected_niche, "creative"
+        )
+        if shortfall:
+            lines.extend([f"NOTE: {shortfall}", ""])
 
     if briefing.spark:
         lines.extend([
@@ -219,8 +264,9 @@ def render_text(briefing: Briefing) -> str:
 
     lines.extend([
         rule,
-        f"{len(briefing.global_topics)} global and {len(briefing.niche_topics)} creative "
-        f"trends from {briefing.source_count} sources.",
+        f"{len(briefing.global_topics)} global stories and {len(briefing.brand_topics)} "
+        f"across {briefing.brands_with_content} of {len(briefing.brand_blocks)} brands, "
+        f"from {briefing.source_count} sources.",
         "Melbourne Mama Morning Intelligence",
     ])
 

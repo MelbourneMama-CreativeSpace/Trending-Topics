@@ -1,6 +1,13 @@
 """Email rendering and delivery (PRD 42-47, 61)."""
 
-from app.mailer.render import Briefing, build_subject, render_html, render_text, shortfall_note
+from app.mailer.render import (
+    BrandBlock,
+    Briefing,
+    build_subject,
+    render_html,
+    render_text,
+    shortfall_note,
+)
 from app.mailer.sender import (
     EmailSender,
     NullSender,
@@ -13,6 +20,7 @@ from app.mailer.sender import (
 )
 
 __all__ = [
+    "BrandBlock",
     "Briefing",
     "EmailSender",
     "NullSender",

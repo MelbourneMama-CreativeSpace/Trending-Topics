@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from app.ai.service import AiService
+from app.brands import BRANDS
 from app.cluster.clusterer import cluster_articles
 from app.cluster.dedup import deduplicate
 from app.cluster.topics import merge_topic_history, reconcile
@@ -29,7 +30,14 @@ from app.config import Settings
 from app.errors import BriefingError, ErrorCode, Severity
 from app.locking import ExecutionLock
 from app.logging_setup import LogEvent, RunLogger
-from app.mailer import Briefing, EmailSender, NullSender, build_mail_client, build_subject
+from app.mailer import (
+    BrandBlock,
+    Briefing,
+    EmailSender,
+    NullSender,
+    build_mail_client,
+    build_subject,
+)
 from app.mailer.render import render_html, render_text
 from app.models import (
     Briefing as BriefingRecord,
@@ -42,7 +50,8 @@ from app.models import (
     SourceType,
     build_briefing_id,
 )
-from app.rank import RankingContext, select_global_top, select_niche_top
+from app.rank import RankingContext, select_brand_radar, select_global_top
+from app.rank.brand_ranker import BrandSelection
 from app.rank.history import load_previous_scores
 from app.rank.profile import DEFAULT_PROFILE, FounderProfile
 from app.run_context import generate_run_id
@@ -56,6 +65,10 @@ DEFAULT_TIMEOUT_SECONDS = 600
 # PRD 31: three verified topics beat five padded ones. Below three across both
 # sections there is no briefing worth sending.
 MIN_TOTAL_TOPICS = 3
+
+# Stories per brand in the Brand Radar. Ten brands at two apiece keeps the email
+# scannable; more than that and it stops being a morning read.
+TOPICS_PER_BRAND = 2
 
 # Cap on what articles.csv retains. Nothing reads this file back -- it exists because
 # PRD 12 defines the schema -- and every row is committed to git on every run, so 2000
@@ -77,6 +90,7 @@ class PipelineDeps:
     sender: EmailSender
     data_dir: Path
     profile: FounderProfile = DEFAULT_PROFILE
+    brands: tuple = BRANDS
     sync: GitHubSync | None = None
     """Git-backed durability (PRD 8). None means local-only, which is correct for
     tests and for any host with a persistent disk."""
@@ -238,16 +252,20 @@ class BriefingRunner:
             deps.repo, [o for r in collected.values() for o in r.outcomes], now
         )
 
-        selections, _clusters = self._rank(
+        global_selection, brand_selections, _clusters = self._rank(
             log, collected, reliability, source_types, now
         )
         # Reconciles topic identity, then builds trend scores from the reconciled ids.
         # The order matters -- see the docstring.
-        self._persist_analysis(log, collected, selections, now)
+        self._persist_analysis(log, collected, global_selection, brand_selections, now)
 
-        result, spark = await self._research(log, selections)
+        result, brand_blocks, spark = await self._research(
+            log, global_selection, brand_selections
+        )
 
-        total = result.succeeded
+        # Brand entries count toward the threshold: a morning with four solid brand
+        # stories and one global is still a briefing worth sending.
+        total = result.succeeded + sum(len(block.topics) for block in brand_blocks)
         if total < MIN_TOTAL_TOPICS:
             # PRD 31: refuse rather than pad. Fewer than three verified topics is
             # not a briefing, and inventing the rest is never an option.
@@ -259,7 +277,7 @@ class BriefingRunner:
 
         briefing = Briefing(
             briefing_date=now.date(), timezone=settings.timezone,
-            global_topics=result.global_topics, niche_topics=result.niche_topics,
+            global_topics=result.global_topics, brand_blocks=brand_blocks,
             spark=spark, expected_global=settings.global_top_n,
             expected_niche=settings.niche_top_n, generated_at=now,
         )
@@ -276,7 +294,7 @@ class BriefingRunner:
             status=BriefingStatus.PARTIAL if briefing.is_partial else BriefingStatus.COMPLETED,
             started_at=now, completed_at=dt.datetime.now(settings.tz),
             global_count=len(result.global_topics),
-            niche_count=len(result.niche_topics),
+            niche_count=sum(len(block.topics) for block in brand_blocks),
             email_status=EmailStatus.SKIPPED if dry_run else EmailStatus.SENT,
             email_message_id=send.message_id,
         ))
@@ -287,7 +305,7 @@ class BriefingRunner:
         return RunOutcome(
             success=True, run_id=run_id, status=status,
             global_topics=len(result.global_topics),
-            niche_topics=len(result.niche_topics),
+            niche_topics=sum(len(block.topics) for block in brand_blocks),
             email_sent=not dry_run, duration_seconds=duration,
             warnings=self._warnings(briefing, spark),
         )
@@ -342,8 +360,11 @@ class BriefingRunner:
         return collected
 
     def _rank(self, log, collected, reliability, source_types, now):
+        """Global top N, plus a per-brand shortlist for the Brand Radar."""
         settings = self._deps.settings
-        selections, all_clusters = {}, []
+        global_topics: list = []
+        brand_selections: list[BrandSelection] = []
+        all_clusters = []
 
         for section in (Section.GLOBAL, Section.NICHE):
             articles = collected[section].articles
@@ -359,21 +380,29 @@ class BriefingRunner:
                                      source_types=source_types, previous_scores=history)
 
             if section is Section.GLOBAL:
-                chosen = select_global_top(clusters, context, top_n=settings.global_top_n)
+                global_topics = select_global_top(
+                    clusters, context, top_n=settings.global_top_n
+                )
                 log.event(LogEvent.GLOBAL_RANKING_COMPLETED,
-                          ranked=len(clusters), selected=len(chosen))
+                          ranked=len(clusters), selected=len(global_topics))
             else:
-                chosen = select_niche_top(clusters, context, top_n=settings.niche_top_n,
-                                          profile=self._deps.profile)
-                log.event(LogEvent.NICHE_RANKING_COMPLETED,
-                          ranked=len(clusters), selected=len(chosen))
+                brand_selections = select_brand_radar(
+                    clusters, context, per_brand=TOPICS_PER_BRAND, brands=self._deps.brands
+                )
+                log.event(
+                    LogEvent.NICHE_RANKING_COMPLETED,
+                    ranked=len(clusters),
+                    selected=sum(len(s.topics) for s in brand_selections),
+                    brands_with_content=sum(1 for s in brand_selections if s.topics),
+                )
 
-            selections[section] = chosen
             all_clusters.extend(clusters)
 
-        return selections, all_clusters
+        return global_topics, brand_selections, all_clusters
 
-    def _persist_analysis(self, log, collected, selections, now) -> None:
+    def _persist_analysis(
+        self, log, collected, global_selection, brand_selections, now
+    ) -> None:
         """PRD 90: a CSV write failure must abort before success is recorded.
 
         These writes happen before the email is sent for exactly that reason -- a run
@@ -393,7 +422,8 @@ class BriefingRunner:
         ~900 of them per run would add megabytes of git history for nothing.
         """
         repo = self._deps.repo
-        chosen = [topic for section_topics in selections.values() for topic in section_topics]
+        brand_topics = [t for selection in brand_selections for t in selection.topics]
+        chosen = [*global_selection, *brand_topics]
 
         existing = list(repo.read(Dataset.TOPICS))
         reconciled = reconcile([topic.cluster for topic in chosen], existing, now)
@@ -402,9 +432,8 @@ class BriefingRunner:
                   newly_seen=reconciled.newly_seen)
 
         scores = [
-            topic.to_trend_score(now.date(), section)
-            for section, section_topics in selections.items()
-            for topic in section_topics
+            *(t.to_trend_score(now.date(), Section.GLOBAL) for t in global_selection),
+            *(t.to_trend_score(now.date(), Section.NICHE) for t in brand_topics),
         ]
         repo.append(Dataset.TREND_SCORES, scores)
 
@@ -413,19 +442,45 @@ class BriefingRunner:
             [a for r in collected.values() for a in r.articles][:MAX_STORED_ARTICLES],
         )
 
-    async def _research(self, log: RunLogger, selections):
+    async def _research(self, log: RunLogger, global_selection, brand_selections):
+        """Full briefs for Global Pulse, compact ones for the Brand Radar.
+
+        The two use different prompts and token budgets on purpose: a brand block is a
+        headline and one sentence, so asking for the full four-field brief would cost
+        several times as much for material that is never rendered.
+        """
         log.event(LogEvent.RESEARCH_STARTED)
         factory = self._deps.http_factory or build_client
+
         async with factory() as http:
-            result = await self._deps.ai.research_all(
-                http, selections[Section.GLOBAL], selections[Section.NICHE]
-            )
+            result = await self._deps.ai.research_all(http, global_selection, [])
+            radar = await self._deps.ai.research_brand_radar(http, brand_selections)
+            blocks = self._to_blocks(brand_selections, radar)
             spark = await self._deps.ai.creative_spark(
-                http, result.global_topics + result.niche_topics
+                http, result.global_topics + [t for b in blocks for t in b.topics]
             )
-        log.event(LogEvent.RESEARCH_COMPLETED,
-                  succeeded=result.succeeded, failed=result.failed, spark=bool(spark))
-        return result, spark
+
+        log.event(
+            LogEvent.RESEARCH_COMPLETED,
+            global_ok=len(result.global_topics),
+            brand_ok=sum(len(b.topics) for b in blocks),
+            brands_with_content=sum(1 for b in blocks if b.topics),
+            spark=bool(spark),
+        )
+        return result, blocks, spark
+
+    def _to_blocks(self, brand_selections, radar) -> list[BrandBlock]:
+        by_key = dict(radar)
+        return [
+            BrandBlock(
+                key=selection.brand.key,
+                name=selection.brand.name,
+                tagline=selection.brand.tagline,
+                icon=selection.brand.icon,
+                topics=by_key.get(selection.brand.key, []),
+            )
+            for selection in brand_selections
+        ]
 
     async def _send(self, log: RunLogger, briefing: Briefing, html: str, text: str,
                     *, dry_run: bool):
@@ -477,11 +532,11 @@ class BriefingRunner:
                 f"only {len(briefing.global_topics)} of {briefing.expected_global} "
                 f"global topics were verified"
             )
-        if len(briefing.niche_topics) < briefing.expected_niche:
-            warnings.append(
-                f"only {len(briefing.niche_topics)} of {briefing.expected_niche} "
-                f"creative topics were verified"
-            )
+        empty = [b.name for b in briefing.brand_blocks if not b.topics]
+        if empty:
+            # Named, not counted: which lanes were quiet is the useful part, and it is
+            # information rather than a fault.
+            warnings.append(f"no stories matched: {', '.join(empty)}")
         if spark is None:
             warnings.append("no creative spark was produced")
         return warnings

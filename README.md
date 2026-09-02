@@ -6,8 +6,8 @@ independent engines, researches the top ten with an LLM, and emails a briefing:
 
 - **Global Pulse** — the five biggest stories worldwide, chosen with no knowledge of
   the founder's interests
-- **Creative Radar** — the five most relevant trends in Telugu cinema, filmmaking,
-  podcasting, the creator economy and the Melbourne creative scene
+- **Brand Radar** — up to two stories for each of the ten pages in the portfolio, in
+  its own block. A quiet lane says so rather than being hidden
 - **Creative Spark** — one creative opportunity drawn from the day's news
 
 Specification: [docs/PRD.md](docs/PRD.md). Build plan and decisions: [PLAN.md](PLAN.md).
@@ -48,7 +48,7 @@ cp .env.example .env          # then fill it in
 ```
 
 ```bash
-.venv/Scripts/python.exe -m pytest        # 460 tests, no network, no API credits
+.venv/Scripts/python.exe -m pytest        # 487 tests, no network, no API credits
 .venv/Scripts/python.exe -m ruff check .
 ```
 
